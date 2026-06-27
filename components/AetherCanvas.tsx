@@ -1,0 +1,438 @@
+"use client";
+
+import { useRef, useEffect, useState, useCallback } from "react";
+import * as THREE from "three";
+import { motion, AnimatePresence } from "framer-motion";
+
+const N = 6500;
+const STARS = 1200;
+const MAXR = 38;
+const CAP = 120;
+const FORMS = ["spiral", "sphere", "nebula", "vortex"] as const;
+type FormType = (typeof FORMS)[number];
+
+const FALLBACK_PALETTES = [
+  ["#2a1a6e", "#7b3fe4", "#46e0ff"],
+  ["#3a0f2f", "#e0457b", "#ffb347"],
+  ["#06281f", "#1fa97a", "#d4ff7a"],
+  ["#1a1030", "#5a4fff", "#ff6ad5"],
+  ["#2b0a0a", "#ff5e3a", "#ffd166"],
+];
+const FALLBACK_LINES = [
+  "Even a single thought bends the dark into light.",
+  "What you wonder, the stars rearrange to answer.",
+  "Every question is a seed of some unmade galaxy.",
+  "The void was only waiting for you to say something.",
+  "You are made of the same restless stuff as these suns.",
+];
+
+function hexToRGB(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255, parseInt(h.slice(4, 6), 16) / 255];
+}
+function samplePalette(c0: number[], c1: number[], c2: number[], t: number): [number, number, number] {
+  if (t < 0.5) { const k = t * 2; return [c0[0] + (c1[0] - c0[0]) * k, c0[1] + (c1[1] - c0[1]) * k, c0[2] + (c1[2] - c0[2]) * k]; }
+  const k = (t - 0.5) * 2; return [c1[0] + (c2[0] - c1[0]) * k, c1[1] + (c2[1] - c1[1]) * k, c1[2] + (c2[2] - c1[2]) * k];
+}
+function randNorm() { return (Math.random() + Math.random() + Math.random() - 1.5) * 0.9; }
+function hashStr(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
+function starPos(): [number, number, number] { const a = Math.random() * Math.PI * 2, b = Math.acos(2 * Math.random() - 1), r = 52 + Math.random() * 26; return [r * Math.sin(b) * Math.cos(a), r * Math.cos(b), r * Math.sin(b) * Math.sin(a)]; }
+
+function genSpiral(arr: Float32Array, tArr: Float32Array | null) {
+  const branches = 3;
+  for (let i = 0; i < N; i++) {
+    const r = Math.pow(Math.random(), 1.7) * MAXR;
+    const angle = ((i % branches) / branches) * Math.PI * 2 + r * 0.09;
+    const sp = 0.6 + r * 0.05;
+    arr[i * 3] = Math.cos(angle) * r + randNorm() * sp;
+    arr[i * 3 + 1] = randNorm() * (MAXR * 0.05) * (1 - (r / MAXR) * 0.7);
+    arr[i * 3 + 2] = Math.sin(angle) * r + randNorm() * sp;
+    if (tArr) tArr[i] = r / MAXR;
+  }
+}
+function genSphere(arr: Float32Array) {
+  const R = 30, gold = Math.PI * (1 + Math.sqrt(5));
+  for (let i = 0; i < N; i++) {
+    const k = i + 0.5, phi = Math.acos(1 - (2 * k) / N), th = gold * k;
+    const inner = Math.random() < 0.18 ? 0.35 + Math.random() * 0.4 : 0.85 + Math.random() * 0.15;
+    const rad = R * inner;
+    arr[i * 3] = rad * Math.sin(phi) * Math.cos(th); arr[i * 3 + 1] = rad * Math.cos(phi); arr[i * 3 + 2] = rad * Math.sin(phi) * Math.sin(th);
+  }
+}
+function genNebula(arr: Float32Array) {
+  const c: [number, number, number][] = [];
+  for (let i = 0; i < 5; i++) { const a = Math.random() * Math.PI * 2, rr = 6 + Math.random() * 22; c.push([Math.cos(a) * rr, randNorm() * 10, Math.sin(a) * rr]); }
+  for (let i = 0; i < N; i++) { const k = c[i % c.length], s = 7 + Math.random() * 9; arr[i * 3] = k[0] + randNorm() * s; arr[i * 3 + 1] = k[1] + randNorm() * s * 0.7; arr[i * 3 + 2] = k[2] + randNorm() * s; }
+}
+function genVortex(arr: Float32Array) {
+  for (let i = 0; i < N; i++) { const tt = i / N, angle = tt * Math.PI * 18, rad = 4 + (1 - tt) * 34; arr[i * 3] = Math.cos(angle) * rad + randNorm() * 1.4; arr[i * 3 + 1] = (tt - 0.5) * 60 + randNorm() * 1.2; arr[i * 3 + 2] = Math.sin(angle) * rad + randNorm() * 1.4; }
+}
+function buildForm(name: FormType): Float32Array {
+  const a = new Float32Array(N * 3);
+  if (name === "sphere") genSphere(a); else if (name === "nebula") genNebula(a); else if (name === "vortex") genVortex(a); else genSpiral(a, null);
+  return a;
+}
+
+function makeAudio() {
+  const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+  if (!Ctx) return null;
+  const ac = new Ctx();
+  const master = ac.createGain(); master.gain.value = 0; master.connect(ac.destination);
+  const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420; lp.Q.value = 3;
+  const droneGain = ac.createGain(); droneGain.gain.value = 0.2; droneGain.connect(lp); lp.connect(master);
+  [55, 82.4, 110].forEach((f) => { const o = ac.createOscillator(); o.type = "sine"; o.frequency.value = f; const gg = ac.createGain(); gg.gain.value = 0.12; o.connect(gg); gg.connect(droneGain); o.start(); });
+  const buf = ac.createBuffer(1, 2 * ac.sampleRate, ac.sampleRate); const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const noise = ac.createBufferSource(); noise.buffer = buf; noise.loop = true;
+  const bp = ac.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1100; bp.Q.value = 0.7;
+  const noiseGain = ac.createGain(); noiseGain.gain.value = 0.03; noise.connect(bp); bp.connect(noiseGain); noiseGain.connect(master); noise.start();
+  const delay = ac.createDelay(); delay.delayTime.value = 0.34; const fb = ac.createGain(); fb.gain.value = 0.34; delay.connect(fb); fb.connect(delay); delay.connect(master);
+  const scale = [0, 3, 5, 7, 10, 12, 15];
+  return {
+    ac,
+    on() { if (ac.state === "suspended") ac.resume(); master.gain.setTargetAtTime(0.5, ac.currentTime, 0.6); },
+    off() { master.gain.setTargetAtTime(0.0, ac.currentTime, 0.4); },
+    energy(e: number) { const n = ac.currentTime; lp.frequency.setTargetAtTime(320 + e * 1500, n, 0.8); droneGain.gain.setTargetAtTime(0.16 + e * 0.22, n, 0.8); noiseGain.gain.setTargetAtTime(0.02 + e * 0.1, n, 0.8); },
+    pluck(e: number) {
+      const oct = e > 0.6 ? 4 : 3, root = 220 * Math.pow(2, oct - 3);
+      const notes = [0, 2, 4].map((i) => scale[i]);
+      notes.forEach((semi, idx) => { const o = ac.createOscillator(); o.type = "sine"; o.frequency.value = root * Math.pow(2, semi / 12); const gg = ac.createGain(); const t0 = ac.currentTime + idx * 0.06; gg.gain.setValueAtTime(0, t0); gg.gain.linearRampToValueAtTime(0.07, t0 + 0.04); gg.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.6); o.connect(gg); gg.connect(master); gg.connect(delay); o.start(t0); o.stop(t0 + 1.7); });
+    },
+  };
+}
+
+interface SavedStar {
+  id: number;
+  thought: string;
+  whisper: string;
+  palette: string[];
+  form: FormType;
+  energy: number;
+  pos: [number, number, number];
+}
+
+export default function AetherCanvas() {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<any>({});
+  const audioRef = useRef<ReturnType<typeof makeAudio> | null>(null);
+  const lastEnergy = useRef(0.35);
+  const starsRef = useRef<SavedStar[]>([]);
+
+  const [thought, setThought] = useState("");
+  const [whisper, setWhisper] = useState("I am Aether. Whisper a thought, and watch it become a galaxy.");
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState<FormType>("spiral");
+  const [count, setCount] = useState(0);
+  const [show, setShow] = useState(false);
+  const [sound, setSound] = useState(false);
+  const [panel, setPanel] = useState(false);
+  const [list, setList] = useState<SavedStar[]>([]);
+  const [captureURL, setCaptureURL] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x050308, 0.0026);
+    const camera = new THREE.PerspectiveCamera(60, mount.clientWidth / mount.clientHeight, 0.1, 600);
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+    } catch {
+      return;
+    }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(mount.clientWidth, mount.clientHeight);
+    renderer.setClearColor(0x050308, 1);
+    mount.appendChild(renderer.domElement);
+
+    const cv = document.createElement("canvas"); cv.width = cv.height = 64;
+    const c2 = cv.getContext("2d")!;
+    const g = c2.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.25, "rgba(255,255,255,.7)"); g.addColorStop(1, "rgba(255,255,255,0)");
+    c2.fillStyle = g; c2.fillRect(0, 0, 64, 64);
+    const sprite = new THREE.CanvasTexture(cv);
+
+    const tArr = new Float32Array(N);
+    const forms: Record<FormType, Float32Array> = { spiral: new Float32Array(N * 3), sphere: buildForm("sphere"), nebula: buildForm("nebula"), vortex: buildForm("vortex") };
+    genSpiral(forms.spiral, tArr);
+
+    const base = new Float32Array(N * 3); base.set(forms.spiral);
+    const live = new Float32Array(N * 3); live.set(forms.spiral);
+    const phase = new Float32Array(N); for (let i = 0; i < N; i++) phase[i] = Math.random() * Math.PI * 2;
+    const colCur = new Float32Array(N * 3), colTgt = new Float32Array(N * 3);
+
+    const applyPalette = (pal: string[], into: Float32Array) => {
+      const a = hexToRGB(pal[0]), b = hexToRGB(pal[1]), c = hexToRGB(pal[2]);
+      for (let i = 0; i < N; i++) { const k = samplePalette(a, b, c, tArr[i]); into[i * 3] = k[0]; into[i * 3 + 1] = k[1]; into[i * 3 + 2] = k[2]; }
+    };
+    applyPalette(FALLBACK_PALETTES[0], colCur); colTgt.set(colCur);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(live, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(colCur, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.9, map: sprite, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0.95 });
+    const points = new THREE.Points(geo, mat); scene.add(points);
+
+    const coreMat = new THREE.SpriteMaterial({ map: sprite, color: 0x9b6bff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const core = new THREE.Sprite(coreMat); core.scale.set(14, 14, 1); scene.add(core);
+
+    const sGeo = new THREE.BufferGeometry(); const sPos = new Float32Array(STARS * 3);
+    for (let i = 0; i < STARS; i++) { const a = Math.random() * Math.PI * 2, b = Math.acos(2 * Math.random() - 1), r = 130 + Math.random() * 120; sPos[i * 3] = r * Math.sin(b) * Math.cos(a); sPos[i * 3 + 1] = r * Math.cos(b); sPos[i * 3 + 2] = r * Math.sin(b) * Math.sin(a); }
+    sGeo.setAttribute("position", new THREE.BufferAttribute(sPos, 3));
+    const bgStars = new THREE.Points(sGeo, new THREE.PointsMaterial({ size: 0.7, color: 0x8899cc, map: sprite, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }));
+    scene.add(bgStars);
+
+    const memPos = new Float32Array(CAP * 3).fill(1e5);
+    const memCol = new Float32Array(CAP * 3).fill(1);
+    const memGeo = new THREE.BufferGeometry();
+    memGeo.setAttribute("position", new THREE.BufferAttribute(memPos, 3));
+    memGeo.setAttribute("color", new THREE.BufferAttribute(memCol, 3));
+    memGeo.setDrawRange(0, 0);
+    const memMat = new THREE.PointsMaterial({ size: 3.4, map: sprite, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0.95 });
+    const memPoints = new THREE.Points(memGeo, memMat); scene.add(memPoints);
+
+    const cam = { theta: 0.6, phi: 1.15, radius: 150, targetRadius: 62, lastInput: performance.now() };
+    const updateCam = () => { camera.position.set(cam.radius * Math.sin(cam.phi) * Math.cos(cam.theta), cam.radius * Math.cos(cam.phi), cam.radius * Math.sin(cam.phi) * Math.sin(cam.theta)); camera.lookAt(0, 0, 0); };
+
+    let dragging = false, px = 0, py = 0, pinchD = 0, downX = 0, downY = 0, downT = 0, moved = 0;
+    const dist2 = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const ray = new THREE.Raycaster(); (ray.params as any).Points = { threshold: 3.5 };
+    const el = renderer.domElement;
+
+    const onDown = (e: PointerEvent) => { dragging = true; px = e.clientX; py = e.clientY; downX = e.clientX; downY = e.clientY; downT = performance.now(); moved = 0; cam.lastInput = downT; };
+    const onMove = (e: PointerEvent) => { if (!dragging) return; moved += Math.abs(e.clientX - px) + Math.abs(e.clientY - py); cam.theta -= (e.clientX - px) * 0.005; cam.phi = Math.max(0.18, Math.min(Math.PI - 0.18, cam.phi - (e.clientY - py) * 0.005)); px = e.clientX; py = e.clientY; cam.lastInput = performance.now(); };
+    const onUp = () => {
+      dragging = false;
+      if (moved < 8 && performance.now() - downT < 400) {
+        const rect = el.getBoundingClientRect();
+        const nx = ((downX - rect.left) / rect.width) * 2 - 1, ny = -((downY - rect.top) / rect.height) * 2 + 1;
+        ray.setFromCamera({ x: nx, y: ny } as THREE.Vector2, camera);
+        const hits = ray.intersectObject(memPoints);
+        if (hits.length && hits[0].index !== undefined && hits[0].index < starsRef.current.length && sceneRef.current.onStarTap) sceneRef.current.onStarTap(hits[0].index);
+      }
+    };
+    el.addEventListener("pointerdown", onDown); window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+    const onTS = (e: TouchEvent) => { if (e.touches.length === 2) pinchD = dist2(e.touches); };
+    const onTM = (e: TouchEvent) => { if (e.touches.length === 2) { const d = dist2(e.touches); cam.targetRadius = Math.max(34, Math.min(120, cam.targetRadius - (d - pinchD) * 0.25)); pinchD = d; cam.lastInput = performance.now(); e.preventDefault(); } };
+    el.addEventListener("touchstart", onTS, { passive: false }); el.addEventListener("touchmove", onTM, { passive: false });
+
+    let energyCur = 0.35, energyTgt = 0.35, colorFrames = 0, spin = 0;
+    let currentTarget = forms.spiral;
+
+    sceneRef.current = {
+      morph(pal: string[], fname: string, energy: number) {
+        currentTarget = forms[FORMS.includes(fname as FormType) ? (fname as FormType) : "spiral"];
+        applyPalette(pal, colTgt); colorFrames = 90; energyTgt = Math.max(0, Math.min(1, energy));
+        coreMat.color.set(pal[2]);
+      },
+      rebuildStars(arr: SavedStar[]) {
+        const n = Math.min(arr.length, CAP);
+        for (let i = 0; i < CAP; i++) {
+          if (i < n) { const s = arr[i]; memPos[i * 3] = s.pos[0]; memPos[i * 3 + 1] = s.pos[1]; memPos[i * 3 + 2] = s.pos[2]; const rgb = hexToRGB(s.palette[2]); memCol[i * 3] = rgb[0]; memCol[i * 3 + 1] = rgb[1]; memCol[i * 3 + 2] = rgb[2]; }
+          else { memPos[i * 3] = memPos[i * 3 + 1] = memPos[i * 3 + 2] = 1e5; }
+        }
+        memGeo.setDrawRange(0, n); memGeo.attributes.position.needsUpdate = true; memGeo.attributes.color.needsUpdate = true;
+      },
+      snapshot(whisperText: string) {
+        const W = mount.clientWidth, H = mount.clientHeight;
+        renderer.setSize(1080, 1920); camera.aspect = 1080 / 1920; camera.updateProjectionMatrix(); renderer.render(scene, camera);
+        const out = document.createElement("canvas"); out.width = 1080; out.height = 1920; const o = out.getContext("2d")!;
+        o.fillStyle = "#050308"; o.fillRect(0, 0, 1080, 1920);
+        o.drawImage(renderer.domElement, 0, 0, 1080, 1920);
+        const vg = o.createRadialGradient(540, 760, 200, 540, 960, 1100); vg.addColorStop(0, "rgba(5,3,8,0)"); vg.addColorStop(1, "rgba(5,3,8,.72)"); o.fillStyle = vg; o.fillRect(0, 0, 1080, 1920);
+        o.textAlign = "center";
+        o.fillStyle = "rgba(220,216,255,.5)"; o.font = "300 24px 'Helvetica Neue', Arial, sans-serif"; o.fillText("A   WHISPER   TO   THE   VOID", 540, 250);
+        o.fillStyle = "#f3f0ff"; o.font = "italic 400 54px Georgia, 'Times New Roman', serif"; o.shadowColor = "rgba(130,100,230,.85)"; o.shadowBlur = 38;
+        const words = (whisperText || "").split(" "); let line = ""; const lines: string[] = [];
+        for (const w of words) { if (o.measureText(line + w).width > 880 && line) { lines.push(line.trim()); line = w + " "; } else line += w + " "; } if (line.trim()) lines.push(line.trim());
+        const startY = 820 - (lines.length - 1) * 36; lines.forEach((ln, i) => o.fillText(ln, 540, startY + i * 72));
+        o.shadowBlur = 0;
+        o.fillStyle = "rgba(233,228,255,.92)"; o.font = "300 34px 'Helvetica Neue', Arial, sans-serif"; o.fillText("✦  AETHER", 540, 1770);
+        o.fillStyle = "rgba(200,196,235,.45)"; o.font = "300 18px 'Helvetica Neue', Arial, sans-serif"; o.fillText("A LIVING COSMOS", 540, 1812);
+        const url = out.toDataURL("image/png");
+        renderer.setSize(W, H); camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.render(scene, camera);
+        return url;
+      },
+    };
+
+    const onResize = () => { if (!mountRef.current) return; const w = mountRef.current.clientWidth, h = mountRef.current.clientHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); };
+    window.addEventListener("resize", onResize);
+
+    let raf: number, lastT = performance.now();
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      const now = performance.now(); const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; const t = now / 1000;
+      cam.radius += (cam.targetRadius - cam.radius) * 0.045;
+      if (!dragging && now - cam.lastInput > 2500) cam.theta += 0.04 * dt;
+      updateCam();
+      energyCur += (energyTgt - energyCur) * 0.03;
+      spin += (0.06 + energyCur * 0.5) * dt; points.rotation.y = spin; bgStars.rotation.y = spin * 0.06; memPoints.rotation.y = spin * 0.12;
+      const amp = energyCur * 7; const posArr = geo.attributes.position.array as Float32Array;
+      for (let i = 0; i < N; i++) { const j = i * 3; base[j] += (currentTarget[j] - base[j]) * 0.045; base[j + 1] += (currentTarget[j + 1] - base[j + 1]) * 0.045; base[j + 2] += (currentTarget[j + 2] - base[j + 2]) * 0.045; const ph = phase[i]; posArr[j] = base[j] + Math.sin(t * 0.7 + ph) * amp; posArr[j + 1] = base[j + 1] + Math.sin(t * 0.9 + ph * 1.7) * amp; posArr[j + 2] = base[j + 2] + Math.cos(t * 0.6 + ph) * amp; }
+      geo.attributes.position.needsUpdate = true;
+      if (colorFrames > 0) { for (let i = 0; i < N * 3; i++) colCur[i] += (colTgt[i] - colCur[i]) * 0.06; geo.attributes.color.needsUpdate = true; colorFrames--; }
+      const pulse = 1 + Math.sin(t * (1.5 + energyCur * 3)) * (0.12 + energyCur * 0.25); core.scale.set(13 * pulse, 13 * pulse, 1); coreMat.opacity = 0.55 + energyCur * 0.4;
+      (memMat as any).size = 3.0 + Math.sin(t * 1.3) * 0.5; memMat.opacity = 0.8 + Math.sin(t * 0.9) * 0.18;
+      mat.size = 0.85 + energyCur * 0.5;
+      renderer.render(scene, camera);
+    };
+    loop();
+
+    const showT = setTimeout(() => setShow(true), 350);
+
+    return () => {
+      cancelAnimationFrame(raf); clearTimeout(showT);
+      window.removeEventListener("resize", onResize); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointerdown", onDown); el.removeEventListener("touchstart", onTS); el.removeEventListener("touchmove", onTM);
+      geo.dispose(); mat.dispose(); sGeo.dispose(); (bgStars.material as THREE.Material).dispose(); memGeo.dispose(); memMat.dispose(); sprite.dispose(); coreMat.dispose(); renderer.dispose();
+      if (el.parentNode) el.parentNode.removeChild(el);
+    };
+  }, []);
+
+  const remember = useCallback((s: SavedStar) => {
+    starsRef.current = [...starsRef.current, s].slice(-CAP);
+    sceneRef.current.rebuildStars?.(starsRef.current);
+    setList([...starsRef.current].reverse());
+    setCount(starsRef.current.length);
+    fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) }).catch(() => {});
+  }, []);
+
+  const applyResult = useCallback((pal: string[], fm: FormType, en: number, text: string, save?: string) => {
+    sceneRef.current.morph?.(pal, fm, en); setForm(fm); lastEnergy.current = en;
+    if (audioRef.current) { audioRef.current.energy(en); audioRef.current.pluck(en); }
+    if (save) remember({ id: Date.now(), thought: save, whisper: text, palette: pal, form: fm, energy: en, pos: starPos() });
+    setWhisper(text);
+  }, [remember]);
+
+  const fallback = useCallback((text: string) => {
+    const h = hashStr(text || "void");
+    applyResult(FALLBACK_PALETTES[h % FALLBACK_PALETTES.length], FORMS[h % FORMS.length], Math.min(1, 0.25 + (text.length % 80) / 90), FALLBACK_LINES[h % FALLBACK_LINES.length], text);
+  }, [applyResult]);
+
+  const ask = useCallback(async () => {
+    const text = thought.trim(); if (!text || loading) return;
+    setLoading(true); setThought("");
+    try {
+      const res = await fetch("/api/whisper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ thought: text }) });
+      if (!res.ok) throw new Error("api");
+      const data = await res.json();
+      const pal: string[] = Array.isArray(data.palette) && data.palette.length >= 3 ? data.palette.slice(0, 3) : FALLBACK_PALETTES[0];
+      const fm: FormType = FORMS.includes(data.form) ? data.form : "spiral";
+      applyResult(pal, fm, typeof data.energy === "number" ? data.energy : 0.5, String(data.whisper || FALLBACK_LINES[0]).slice(0, 160), text);
+    } catch { fallback(text); }
+    finally { setLoading(false); }
+  }, [thought, loading, applyResult, fallback]);
+
+  const toggleSound = () => {
+    if (!audioRef.current) { audioRef.current = makeAudio(); if (audioRef.current) audioRef.current.energy(lastEnergy.current); }
+    if (!audioRef.current) return;
+    if (sound) { audioRef.current.off(); setSound(false); } else { audioRef.current.on(); setSound(true); }
+  };
+
+  const revisit = useCallback((s: SavedStar) => {
+    sceneRef.current.morph?.(s.palette, s.form, s.energy); setForm(s.form); setWhisper(s.whisper); lastEnergy.current = s.energy;
+    if (audioRef.current) { audioRef.current.energy(s.energy); audioRef.current.pluck(s.energy); }
+    setPanel(false);
+  }, []);
+
+  useEffect(() => { sceneRef.current.onStarTap = (i: number) => { const s = starsRef.current[i]; if (s) revisit(s); }; });
+
+  const capture = () => { try { setCaptureURL(sceneRef.current.snapshot?.(whisper) ?? null); } catch {} };
+  const clearStars = () => { starsRef.current = []; sceneRef.current.rebuildStars?.([]); setList([]); setCount(0); };
+
+  const ui = { opacity: show ? 1 : 0, transition: "opacity 0.9s ease" };
+
+  return (
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#050308", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
+      <div ref={mountRef} style={{ position: "absolute", inset: 0, touchAction: "none", cursor: "grab" }} />
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "radial-gradient(circle at 50% 42%, transparent 35%, rgba(5,3,8,.55) 100%)" }} />
+
+      <div style={{ position: "absolute", top: 22, left: 24, pointerEvents: "none", ...ui }}>
+        <div style={{ color: "#e9e6ff", fontSize: 13, letterSpacing: "0.62em", fontWeight: 300 }}>A E T H E R</div>
+        <div style={{ color: "rgba(200,196,235,.45)", fontSize: 9.5, letterSpacing: "0.32em", marginTop: 6 }}>A WHISPER TO THE VOID</div>
+      </div>
+
+      <div style={{ position: "absolute", top: 22, right: 24, display: "flex", flexDirection: "column", alignItems: "flex-end", ...ui }}>
+        <div style={{ color: "rgba(200,196,235,.5)", fontSize: 10, letterSpacing: "0.2em", pointerEvents: "none" }}>FORM · {form.toUpperCase()}</div>
+        <div style={{ height: 8 }} />
+        {(["SOUND · " + (sound ? "ON" : "OFF"), "STARS · " + count, "CAPTURE ✦"] as const).map((label, i) => (
+          <button key={i} onClick={[toggleSound, () => setPanel((p) => !p), capture][i]}
+            style={{ display: "block", background: "none", border: "none", color: "rgba(214,210,245,.7)", fontSize: 10, letterSpacing: "0.2em", padding: "6px 0", cursor: "pointer", textAlign: "right", fontFamily: "inherit" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ position: "absolute", left: 0, right: 0, top: "20%", display: "flex", justifyContent: "center", padding: "0 28px", pointerEvents: "none" }}>
+        <AnimatePresence mode="wait">
+          <motion.div key={loading ? "__loading__" : whisper} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.9 }}
+            style={{ maxWidth: 620, textAlign: "center", color: "#f3f0ff", fontFamily: "Georgia, 'Times New Roman', serif", fontStyle: "italic", fontSize: "clamp(19px, 3.4vw, 30px)", lineHeight: 1.45, textShadow: "0 0 28px rgba(120,90,220,.5)" }}>
+            {loading ? "Aether is contemplating…" : whisper}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 26, display: "flex", justifyContent: "center", padding: "0 18px", ...ui }}>
+        <div style={{ width: "100%", maxWidth: 560, display: "flex", gap: 10, alignItems: "center" }}>
+          <textarea value={thought} disabled={loading} rows={1}
+            onChange={(e) => setThought(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+            placeholder="whisper a thought to the cosmos…"
+            style={{ flex: 1, background: "rgba(18,14,34,.55)", backdropFilter: "blur(10px)", border: "1px solid rgba(150,130,230,.28)", borderRadius: 999, color: "#eee9ff", fontSize: 15, padding: "13px 20px", fontFamily: "inherit", resize: "none", outline: "none" }} />
+          <button onClick={ask} disabled={loading}
+            style={{ background: "rgba(130,100,255,.16)", border: "1px solid rgba(160,140,255,.4)", color: "#e9e4ff", borderRadius: 999, padding: "13px 22px", fontSize: 13, letterSpacing: "0.18em", cursor: loading ? "default" : "pointer", whiteSpace: "nowrap" }}>
+            {loading ? "···" : "RELEASE"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ position: "absolute", bottom: 6, left: 0, right: 0, textAlign: "center", color: "rgba(190,186,225,.3)", fontSize: 9.5, letterSpacing: "0.22em", pointerEvents: "none" }}>
+        DRAG TO ORBIT · PINCH TO ZOOM · TAP A STAR TO REVISIT
+      </div>
+
+      <AnimatePresence>
+        {panel && (
+          <motion.div initial={{ x: 320 }} animate={{ x: 0 }} exit={{ x: 320 }} transition={{ type: "spring", damping: 28, stiffness: 280 }}
+            style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "min(320px, 82vw)", background: "rgba(10,7,18,.82)", backdropFilter: "blur(16px)", borderLeft: "1px solid rgba(150,130,230,.2)", display: "flex", flexDirection: "column", zIndex: 5 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 22px 14px" }}>
+              <div style={{ color: "#e9e6ff", fontSize: 11, letterSpacing: "0.3em" }}>YOUR CONSTELLATION</div>
+              <button onClick={() => setPanel(false)} style={{ background: "none", border: "none", color: "rgba(220,216,255,.6)", fontSize: 18, cursor: "pointer" }}>&times;</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 12px" }}>
+              {list.length === 0 && <div style={{ color: "rgba(200,196,235,.4)", fontSize: 13, padding: "20px 12px", fontStyle: "italic", fontFamily: "Georgia, serif" }}>No stars yet. Every thought you release becomes one.</div>}
+              {list.map((s) => (
+                <div key={s.id} onClick={() => revisit(s)} style={{ padding: "13px 12px", borderRadius: 10, cursor: "pointer", marginBottom: 4 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 8, background: s.palette[2], boxShadow: `0 0 10px ${s.palette[2]}`, display: "inline-block" }} />
+                    <span style={{ color: "rgba(200,196,235,.45)", fontSize: 8.5, letterSpacing: "0.2em" }}>{s.form.toUpperCase()}</span>
+                  </div>
+                  <div style={{ color: "#ece8ff", fontSize: 14, fontFamily: "Georgia, serif", fontStyle: "italic", lineHeight: 1.4 }}>{s.whisper}</div>
+                </div>
+              ))}
+            </div>
+            {list.length > 0 && (
+              <button onClick={clearStars} style={{ margin: "10px 22px 20px", background: "none", border: "1px solid rgba(180,120,140,.3)", color: "rgba(230,170,190,.7)", borderRadius: 999, padding: 9, fontSize: 10, letterSpacing: "0.2em", cursor: "pointer" }}>
+                DISSOLVE ALL STARS
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {captureURL && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: "absolute", inset: 0, background: "rgba(3,2,6,.92)", backdropFilter: "blur(8px)", zIndex: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <img src={captureURL} alt="A whisper to the void" style={{ maxHeight: "72vh", maxWidth: "92vw", borderRadius: 12, boxShadow: "0 0 60px rgba(120,90,220,.4)" }} />
+            <div style={{ color: "rgba(220,216,255,.7)", fontSize: 12, letterSpacing: "0.1em", marginTop: 16, textAlign: "center" }}>Long-press the image to save · ready for stories & reels</div>
+            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+              <a href={captureURL} download="aether-whisper.png" style={{ background: "rgba(130,100,255,.16)", border: "1px solid rgba(160,140,255,.4)", color: "#e9e4ff", borderRadius: 999, padding: "11px 22px", fontSize: 12, letterSpacing: "0.16em", textDecoration: "none" }}>DOWNLOAD</a>
+              <button onClick={() => setCaptureURL(null)} style={{ background: "none", border: "1px solid rgba(150,130,230,.3)", color: "rgba(220,216,255,.7)", borderRadius: 999, padding: "11px 22px", fontSize: 12, letterSpacing: "0.16em", cursor: "pointer" }}>CLOSE</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
