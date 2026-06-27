@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, Suspense, forwardRef } from "react";
+import { Suspense } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -12,12 +12,11 @@ interface CosmosProps {
   onStarClick: (star: Star) => void;
 }
 
-const Cosmos = forwardRef<HTMLCanvasElement, CosmosProps>(function Cosmos({ onStarClick }, ref) {
+export default function Cosmos({ onStarClick }: CosmosProps) {
   const { form, palette, energy, stars } = useAetherStore();
 
   return (
     <Canvas
-      ref={ref as any}
       style={{ background: "#050308", width: "100%", height: "100%" }}
       camera={{ position: [0, 10, 40], fov: 60, near: 0.1, far: 1000 }}
       gl={{
@@ -51,6 +50,4 @@ const Cosmos = forwardRef<HTMLCanvasElement, CosmosProps>(function Cosmos({ onSt
       </Suspense>
     </Canvas>
   );
-});
-
-export default Cosmos;
+}

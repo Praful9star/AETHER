@@ -91,36 +91,26 @@ export default function Galaxy({ form, palette, energy }: GalaxyProps) {
   useFrame(({ clock }) => {
     if (!materialRef.current) return;
     materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
-
     if (mixProgressRef.current < 1) {
       mixProgressRef.current = Math.min(1, mixProgressRef.current + 0.008);
       materialRef.current.uniforms.uMix.value = mixProgressRef.current;
     }
   });
 
+  const posAttr = useMemo(() => new THREE.BufferAttribute(positions, 3), [positions]);
+  const fromAttr = useMemo(() => new THREE.BufferAttribute(fromRef.current, 3), []);
+  const toAttr = useMemo(() => new THREE.BufferAttribute(toRef.current, 3), []);
+  const randAttr = useMemo(() => new THREE.BufferAttribute(randArr, 1), [randArr]);
+  const tAttr = useMemo(() => new THREE.BufferAttribute(tArr, 1), [tArr]);
+
   return (
     <points ref={meshRef}>
       <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[positions, 3]}
-        />
-        <bufferAttribute
-          attach="attributes-aFrom"
-          args={[fromRef.current, 3]}
-        />
-        <bufferAttribute
-          attach="attributes-aTo"
-          args={[toRef.current, 3]}
-        />
-        <bufferAttribute
-          attach="attributes-aRand"
-          args={[randArr, 1]}
-        />
-        <bufferAttribute
-          attach="attributes-aT"
-          args={[tArr, 1]}
-        />
+        <bufferAttribute attach="attributes-position" {...posAttr} />
+        <bufferAttribute attach="attributes-aFrom" {...fromAttr} />
+        <bufferAttribute attach="attributes-aTo" {...toAttr} />
+        <bufferAttribute attach="attributes-aRand" {...randAttr} />
+        <bufferAttribute attach="attributes-aT" {...tAttr} />
       </bufferGeometry>
       <shaderMaterial
         ref={materialRef}
