@@ -12,18 +12,15 @@ export default function CaptureModal() {
     const canvas = document.querySelector<HTMLCanvasElement>("canvas");
     if (!canvas) return;
 
-    // Create a composite 1080×1920 portrait
     const out = document.createElement("canvas");
     out.width = 1080;
     out.height = 1920;
     const ctx = out.getContext("2d");
     if (!ctx) return;
 
-    // Background
     ctx.fillStyle = "#050308";
     ctx.fillRect(0, 0, 1080, 1920);
 
-    // Draw WebGL canvas centered
     const aspect = canvas.width / canvas.height;
     let dw = 1080, dh = 1080 / aspect;
     if (dh > 1600) { dh = 1600; dw = dh * aspect; }
@@ -31,19 +28,16 @@ export default function CaptureModal() {
     const dy = (1920 - dh) / 2;
     ctx.drawImage(canvas, dx, dy, dw, dh);
 
-    // Top label
     ctx.fillStyle = "rgba(255,255,255,0.4)";
     ctx.font = "32px serif";
     ctx.textAlign = "center";
     ctx.letterSpacing = "0.3em";
     ctx.fillText("A WHISPER TO THE VOID", 540, 100);
 
-    // AETHER title
     ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.font = "bold 60px serif";
     ctx.fillText("AETHER", 540, 160);
 
-    // Whisper text
     if (whisper) {
       ctx.fillStyle = "rgba(255,255,255,0.75)";
       ctx.font = "italic 36px Georgia, serif";
@@ -67,13 +61,11 @@ export default function CaptureModal() {
       });
     }
 
-    // Bottom form label
     ctx.fillStyle = "rgba(255,255,255,0.2)";
     ctx.font = "24px monospace";
     ctx.letterSpacing = "0.2em";
     ctx.fillText(form.toUpperCase(), 540, 1880);
 
-    // Download
     const link = document.createElement("a");
     link.download = `aether-${Date.now()}.png`;
     link.href = out.toDataURL("image/png");
@@ -82,7 +74,6 @@ export default function CaptureModal() {
 
   return (
     <>
-      {/* Capture button — always visible */}
       <button
         onClick={() => setCaptureModalOpen(true)}
         className="absolute bottom-24 right-6 text-white/30 hover:text-white/70 transition-colors text-xs tracking-widest"

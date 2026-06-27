@@ -24,12 +24,10 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
   const { form, palette, energy, stars } = useAetherStore();
   const [isMobile] = useState(detectMobile);
 
-  // Mobile / tablet: vanilla Three.js, no R3F (bypasses R3F v9 Android bugs)
   if (isMobile) {
     return <MobileCanvas form={form} palette={palette} energy={energy} />;
   }
 
-  // Desktop: full R3F with bloom and 200k particles
   return (
     <Canvas
       style={{ background: "#050308", width: "100%", height: "100%" }}
