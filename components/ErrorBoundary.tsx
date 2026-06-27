@@ -26,9 +26,13 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         this.props.fallback ?? (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#050308]">
-            <p className="text-white/20 text-xs tracking-widest">
-              THE COSMOS IS RESTING
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050308] gap-3 px-6">
+            <p className="text-white/20 text-xs tracking-widest">THE COSMOS IS RESTING</p>
+            <p className="text-red-400/60 text-xs text-center max-w-xs break-words">
+              {this.state.error?.message ?? "Unknown error"}
+            </p>
+            <p className="text-white/10 text-xs text-center max-w-xs break-words">
+              {this.state.error?.stack?.split("\n")[1] ?? ""}
             </p>
           </div>
         )

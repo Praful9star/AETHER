@@ -21,9 +21,16 @@ class PostProcessingBoundary extends Component<
 }
 
 function getDeviceProfile() {
-  if (typeof window === "undefined") return { isMobile: false };
+  if (typeof window === "undefined") return { isMobile: false, hasWebGL2: true, noWebGLReason: "" };
   const isMobile = window.innerWidth <= 768 && navigator.maxTouchPoints > 0;
-  return { isMobile };
+  try {
+    const testCanvas = document.createElement("canvas");
+    const gl = testCanvas.getContext("webgl2");
+    if (!gl) return { isMobile, hasWebGL2: false, noWebGLReason: "webgl2 context returned null" };
+    return { isMobile, hasWebGL2: true, noWebGLReason: "" };
+  } catch (e: any) {
+    return { isMobile, hasWebGL2: false, noWebGLReason: e?.message ?? "webgl2 check threw" };
+  }
 }
 
 interface CosmosProps {
@@ -32,7 +39,17 @@ interface CosmosProps {
 
 export default function Cosmos({ onStarClick }: CosmosProps) {
   const { form, palette, energy, stars } = useAetherStore();
-  const { isMobile } = getDeviceProfile();
+  const { isMobile, hasWebGL2, noWebGLReason } = getDeviceProfile();
+
+  if (!hasWebGL2) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050308] gap-2">
+        <p className="text-white/20 text-xs tracking-widest">THE COSMOS IS RESTING</p>
+        <p className="text-red-400/50 text-xs">WebGL2 unavailable: {noWebGLReason}</p>
+      </div>
+    );
+  }
+
   const particleCount = isMobile ? 60_000 : N;
 
   return (
