@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { vertexShader, fragmentShader } from "../lib/shaders";
 import { generateForm, FormType, N } from "../lib/forms";
 
-function hexToVec3(hex: string): [number, number, number] {
+function hexToRgb(hex: string): [number, number, number] {
   const c = new THREE.Color(hex);
   return [c.r, c.g, c.b];
 }
@@ -40,7 +40,7 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
   const mixProgressRef = useRef(1);
   const prevFormRef = useRef<FormType>("spiral");
 
-  // Imperatively set geometry attributes to avoid R3F v9 JSX bufferAttribute issues
+  // Imperatively set geometry attributes — JSX bufferAttribute has type issues in R3F v9
   useLayoutEffect(() => {
     const geo = geoRef.current;
     if (!geo) return;
@@ -78,10 +78,12 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
 
   useEffect(() => {
     if (!materialRef.current) return;
-    const [c0, c1, c2] = palette.map(hexToVec3);
-    materialRef.current.uniforms.uC0.value.set(...c0);
-    materialRef.current.uniforms.uC1.value.set(...c1);
-    materialRef.current.uniforms.uC2.value.set(...c2);
+    const [r0, g0, b0] = hexToRgb(palette[0]);
+    const [r1, g1, b1] = hexToRgb(palette[1]);
+    const [r2, g2, b2] = hexToRgb(palette[2]);
+    materialRef.current.uniforms.uC0.value.set(r0, g0, b0);
+    materialRef.current.uniforms.uC1.value.set(r1, g1, b1);
+    materialRef.current.uniforms.uC2.value.set(r2, g2, b2);
   }, [palette]);
 
   useEffect(() => {
@@ -90,15 +92,18 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
   }, [energy]);
 
   const uniforms = useMemo(() => {
-    const [c0, c1, c2] = palette.map(hexToVec3);
+    // Use Vector3 instead of Color to avoid Three.js ColorManagement pipeline
+    const [r0, g0, b0] = hexToRgb(palette[0]);
+    const [r1, g1, b1] = hexToRgb(palette[1]);
+    const [r2, g2, b2] = hexToRgb(palette[2]);
     return {
       uMix: { value: 1.0 },
       uTime: { value: 0 },
       uEnergy: { value: energy },
       uSize: { value: 1.5 },
-      uC0: { value: new THREE.Color(...c0) },
-      uC1: { value: new THREE.Color(...c1) },
-      uC2: { value: new THREE.Color(...c2) },
+      uC0: { value: new THREE.Vector3(r0, g0, b0) },
+      uC1: { value: new THREE.Vector3(r1, g1, b1) },
+      uC2: { value: new THREE.Vector3(r2, g2, b2) },
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
