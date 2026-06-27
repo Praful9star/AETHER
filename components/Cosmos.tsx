@@ -7,8 +7,9 @@ import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import Galaxy from "./Galaxy";
 import MemoryStars from "./MemoryStars";
 import { useAetherStore, Star } from "../lib/store";
+import { N } from "../lib/forms";
 
-// If bloom fails on a weak GPU, galaxy still renders — quality unchanged on capable devices
+// Silently drops bloom if GPU can't handle it — galaxy still renders at full quality otherwise
 class PostProcessingBoundary extends Component<
   { children: ReactNode },
   { failed: boolean }
@@ -22,12 +23,25 @@ class PostProcessingBoundary extends Component<
   }
 }
 
+// Detect mobile: small screen + touch input
+function getDeviceProfile() {
+  if (typeof window === "undefined") return { isMobile: false };
+  const isMobile =
+    window.innerWidth <= 768 && navigator.maxTouchPoints > 0;
+  return { isMobile };
+}
+
 interface CosmosProps {
   onStarClick: (star: Star) => void;
 }
 
 export default function Cosmos({ onStarClick }: CosmosProps) {
   const { form, palette, energy, stars } = useAetherStore();
+  const { isMobile } = getDeviceProfile();
+
+  // Mobile: 60k particles, no mipmapBlur. Desktop: full 200k + mipmapBlur.
+  const particleCount = isMobile ? 60_000 : N;
+  const useMipmapBlur = !isMobile;
 
   return (
     <Canvas
@@ -40,7 +54,12 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
       }}
     >
       <Suspense fallback={null}>
-        <Galaxy form={form} palette={palette} energy={energy} />
+        <Galaxy
+          form={form}
+          palette={palette}
+          energy={energy}
+          particleCount={particleCount}
+        />
         <MemoryStars stars={stars} onClickStar={onStarClick} />
 
         <PostProcessingBoundary>
@@ -49,7 +68,7 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
               intensity={1.5}
               luminanceThreshold={0.1}
               luminanceSmoothing={0.9}
-              mipmapBlur
+              mipmapBlur={useMipmapBlur}
             />
           </EffectComposer>
         </PostProcessingBoundary>

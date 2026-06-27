@@ -15,30 +15,31 @@ interface GalaxyProps {
   form: FormType;
   palette: [string, string, string];
   energy: number;
+  particleCount?: number;
 }
 
-export default function Galaxy({ form, palette, energy }: GalaxyProps) {
+export default function Galaxy({ form, palette, energy, particleCount = N }: GalaxyProps) {
+  const count = particleCount;
   const meshRef = useRef<THREE.Points>(null);
   const geoRef = useRef<THREE.BufferGeometry>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
   const { positions, randArr, tArr } = useMemo(() => {
-    const pos = generateForm("spiral", N);
-    const rand = new Float32Array(N);
-    const t = new Float32Array(N);
-    for (let i = 0; i < N; i++) {
+    const pos = generateForm("spiral", count);
+    const rand = new Float32Array(count);
+    const t = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
       rand[i] = Math.random();
       t[i] = Math.random();
     }
     return { positions: pos, randArr: rand, tArr: t };
-  }, []);
+  }, [count]);
 
   const fromRef = useRef<Float32Array>(positions.slice());
   const toRef = useRef<Float32Array>(positions.slice());
   const mixProgressRef = useRef(1);
   const prevFormRef = useRef<FormType>("spiral");
 
-  // Imperatively set geometry attributes — more reliable than JSX bufferAttribute in R3F v9
   useLayoutEffect(() => {
     const geo = geoRef.current;
     if (!geo) return;
@@ -59,20 +60,20 @@ export default function Galaxy({ form, palette, energy }: GalaxyProps) {
     const currentMix = mixProgressRef.current;
     const currentFrom = fromRef.current;
     const currentTo = toRef.current;
-    const snapped = new Float32Array(N * 3);
-    for (let i = 0; i < N * 3; i++) {
+    const snapped = new Float32Array(count * 3);
+    for (let i = 0; i < count * 3; i++) {
       const t = Math.min(1, currentMix);
       snapped[i] = currentFrom[i] + (currentTo[i] - currentFrom[i]) * t;
     }
     fromRef.current = snapped;
-    toRef.current = generateForm(form, N);
+    toRef.current = generateForm(form, count);
     mixProgressRef.current = 0;
 
     const fromAttr = geo.getAttribute("aFrom") as THREE.BufferAttribute;
     const toAttr = geo.getAttribute("aTo") as THREE.BufferAttribute;
     if (fromAttr) { fromAttr.array.set(fromRef.current); fromAttr.needsUpdate = true; }
     if (toAttr) { toAttr.array.set(toRef.current); toAttr.needsUpdate = true; }
-  }, [form]);
+  }, [form, count]);
 
   useEffect(() => {
     if (!materialRef.current) return;
