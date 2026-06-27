@@ -354,50 +354,178 @@ function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array
   return a;
 }
 
-// ─── Audio ────────────────────────────────────────────────────────────────────
+// ─── Audio — per-galaxy soundscapes ────────────────────────────────────────────
 
 function makeAudio() {
   const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
   if (!Ctx) return null;
-  const ac = new Ctx();
+  const ac = new Ctx() as AudioContext;
+
   const master = ac.createGain(); master.gain.value = 0; master.connect(ac.destination);
-  const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420; lp.Q.value = 3;
-  const droneGain = ac.createGain(); droneGain.gain.value = 0.2; droneGain.connect(lp); lp.connect(master);
-  [55, 82.4, 110].forEach((f) => {
+
+  const delay = ac.createDelay(2.0); delay.delayTime.value = 0.36;
+  const fb    = ac.createGain(); fb.gain.value = 0.28;
+  delay.connect(fb); fb.connect(delay); delay.connect(master);
+
+  const lp   = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420; lp.Q.value = 2.5;
+  const dOut = ac.createGain(); dOut.gain.value = 0.18;
+  lp.connect(dOut); dOut.connect(master);
+  [55, 82.4, 110].forEach(f => {
     const o = ac.createOscillator(); o.type = "sine"; o.frequency.value = f;
-    const gg = ac.createGain(); gg.gain.value = 0.12; o.connect(gg); gg.connect(droneGain); o.start();
+    const g = ac.createGain(); g.gain.value = 0.10; o.connect(g); g.connect(lp); o.start();
   });
-  const buf = ac.createBuffer(1, 2 * ac.sampleRate, ac.sampleRate);
-  const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  const noise = ac.createBufferSource(); noise.buffer = buf; noise.loop = true;
-  const bp = ac.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1100; bp.Q.value = 0.7;
-  const noiseGain = ac.createGain(); noiseGain.gain.value = 0.03;
-  noise.connect(bp); bp.connect(noiseGain); noiseGain.connect(master); noise.start();
-  const delay = ac.createDelay(); delay.delayTime.value = 0.34;
-  const fb = ac.createGain(); fb.gain.value = 0.34; delay.connect(fb); fb.connect(delay); delay.connect(master);
-  const scale = [0, 3, 5, 7, 10, 12, 15];
+
+  const nBuf  = ac.createBuffer(1, 2 * ac.sampleRate, ac.sampleRate);
+  const nData = nBuf.getChannelData(0); for (let i = 0; i < nData.length; i++) nData[i] = Math.random() * 2 - 1;
+  const nSrc  = ac.createBufferSource(); nSrc.buffer = nBuf; nSrc.loop = true;
+  const nFilt = ac.createBiquadFilter(); nFilt.type = "bandpass"; nFilt.frequency.value = 800; nFilt.Q.value = 0.7;
+  const nGain = ac.createGain(); nGain.gain.value = 0.022;
+  nSrc.connect(nFilt); nFilt.connect(nGain); nGain.connect(master); nSrc.start();
+
+  const tNote = (freq: number, type: OscillatorType, t: number, atk: number, dec: number, vol: number) => {
+    const o = ac.createOscillator(); o.type = type; o.frequency.value = freq;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + atk);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + atk + dec);
+    o.connect(g); g.connect(master); g.connect(delay); o.start(t); o.stop(t + atk + dec + 0.1);
+  };
+
+  const tGlide = (f0: number, f1: number, type: OscillatorType, t: number, dur: number, vol: number) => {
+    const o = ac.createOscillator(); o.type = type;
+    o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f1, t + dur);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.04);
+    g.gain.linearRampToValueAtTime(0, t + dur);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.1);
+  };
+
+  const tNoise = (t: number, dur: number, vol: number, freq: number) => {
+    const len = Math.ceil(ac.sampleRate * Math.max(0.05, dur));
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const flt = ac.createBiquadFilter(); flt.type = "bandpass"; flt.frequency.value = freq; flt.Q.value = 2;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(flt); flt.connect(g); g.connect(master); src.start(t); src.stop(t + dur + 0.1);
+  };
+
   return {
     ac,
-    on() { if (ac.state === "suspended") ac.resume(); master.gain.setTargetAtTime(0.5, ac.currentTime, 0.6); },
-    off() { master.gain.setTargetAtTime(0.0, ac.currentTime, 0.4); },
-    energy(e: number) {
-      const n = ac.currentTime;
-      lp.frequency.setTargetAtTime(320 + e * 1500, n, 0.8);
-      droneGain.gain.setTargetAtTime(0.16 + e * 0.22, n, 0.8);
-      noiseGain.gain.setTargetAtTime(0.02 + e * 0.1, n, 0.8);
-    },
-    pluck(e: number) {
-      const oct = e > 0.6 ? 4 : 3, root = 220 * Math.pow(2, oct - 3);
-      [0, 2, 4].map((i) => scale[i]).forEach((semi, idx) => {
-        const o = ac.createOscillator(); o.type = "sine";
-        o.frequency.value = root * Math.pow(2, semi / 12);
-        const gg = ac.createGain();
-        const t0 = ac.currentTime + idx * 0.06;
-        gg.gain.setValueAtTime(0, t0);
-        gg.gain.linearRampToValueAtTime(0.07, t0 + 0.04);
-        gg.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.6);
-        o.connect(gg); gg.connect(master); gg.connect(delay); o.start(t0); o.stop(t0 + 1.7);
-      });
+    on()  { if (ac.state === "suspended") ac.resume(); master.gain.setTargetAtTime(0.5, ac.currentTime, 0.6); },
+    off() { master.gain.setTargetAtTime(0, ac.currentTime, 0.4); },
+
+    transition(form: FormType, energy: number) {
+      if (ac.state === "suspended") ac.resume();
+      const t = ac.currentTime;
+      const v = 0.038 + energy * 0.055;
+
+      const LP: Record<FormType, number> = {
+        spiral: 400 + energy * 900, barred: 270,    elliptical: 120,  ring: 1900,
+        merger: 660,                 quasar: 2500,   supernova: 1200,  filament: 1800,
+        hourglass: 490,              tidal: 300,     irregular: 1000,  lenticular: 190,
+        sphere: 1600,                nebula: 570,    vortex: 730,
+      };
+      const NF: Record<FormType, number> = {
+        spiral: 1100, barred: 560,    elliptical: 150,  ring: 3400,
+        merger: 980,  quasar: 4800,   supernova: 7000,  filament: 2500,
+        hourglass: 840, tidal: 360,   irregular: 1700,  lenticular: 300,
+        sphere: 2200, nebula: 730,    vortex: 1400,
+      };
+      lp.frequency.setTargetAtTime(LP[form], t, 0.8);
+      nFilt.frequency.setTargetAtTime(NF[form], t, 0.5);
+      dOut.gain.setTargetAtTime(0.10 + energy * 0.16, t, 0.8);
+      nGain.gain.setTargetAtTime(0.012 + energy * 0.045, t, 0.6);
+
+      switch (form) {
+        case "spiral":
+          [261.6, 329.6, 392, 523.2, 659.3].forEach((f, i) =>
+            tNote(f, "sine", t + i * 0.12, 0.06, 1.8, v));
+          break;
+        case "barred":
+          [220, 261.6, 329.6].forEach((f, i) => tNote(f, "sawtooth", t + i * 0.07, 0.02, 0.5, v * 0.38));
+          [220, 261.6, 329.6].forEach((f, i) => tNote(f, "sawtooth", t + 0.38 + i * 0.07, 0.02, 0.5, v * 0.3));
+          tNote(110, "sawtooth", t + 0.76, 0.02, 0.5, v * 0.22);
+          break;
+        case "elliptical":
+          tNote(36.7, "sine", t + 0.1, 1.1, 3.2, v * 0.75);
+          tNote(55,   "sine", t,       0.9, 2.8, v * 1.3);
+          tNote(82.4, "sine", t + 0.5, 0.8, 2.4, v * 0.9);
+          break;
+        case "ring":
+          tNote(523.2,  "triangle", t,        0.006, 3.5, v * 1.0);
+          tNote(1046.5, "sine",     t + 0.01, 0.006, 2.2, v * 0.55);
+          tNote(2093,   "sine",     t + 0.02, 0.006, 1.4, v * 0.28);
+          tNote(3136,   "sine",     t + 0.03, 0.006, 0.8, v * 0.14);
+          tNote(4186,   "sine",     t + 0.04, 0.006, 0.4, v * 0.07);
+          break;
+        case "merger":
+          [261.6, 329.6, 392.0].forEach((f, i) => tNote(f,       "sine", t + i * 0.06, 0.05, 2.4, v * 0.7));
+          [277.2, 349.2, 415.3].forEach((f, i) => tNote(f,       "sine", t + 0.25 + i * 0.06, 0.05, 2.4, v * 0.65));
+          tNote(196, "sine", t + 0.5, 0.1, 3.0, v * 0.5);
+          break;
+        case "quasar":
+          tNoise(t,        0.28, v * 0.9,  2200);
+          tNoise(t + 0.06, 0.18, v * 0.6,  5000);
+          tNote(880,  "sawtooth", t,        0.01, 1.2, v * 0.65);
+          tNote(1760, "sawtooth", t + 0.05, 0.01, 0.85, v * 0.42);
+          tGlide(3400, 700, "sawtooth", t + 0.3, 0.9, v * 0.35);
+          break;
+        case "supernova":
+          tNoise(t,        0.6,  v * 1.3,  1600);
+          tNoise(t + 0.08, 0.45, v * 0.8,  3800);
+          tNoise(t + 0.2,  0.3,  v * 0.5,  8000);
+          [523.2, 659.3, 783.9, 1046.5].forEach((f, i) =>
+            tNote(f, "sine", t + 0.85 + i * 0.18, 0.14, 3.0, v * 0.52));
+          break;
+        case "filament":
+          [1046.5, 1318.5, 1568, 2093, 2637].forEach((f, i) =>
+            tNote(f, "triangle", t + i * 0.24, 0.03, 1.4, v * 0.4));
+          break;
+        case "hourglass":
+          tGlide(320,  1400, "sine", t,        1.7, v * 0.75);
+          tGlide(1400, 260,  "sine", t + 0.06, 1.7, v * 0.68);
+          tNote(440, "sine", t + 0.85, 0.05, 1.2, v * 0.45);
+          break;
+        case "tidal":
+          tGlide(174, 440, "sine", t,        2.4, v * 0.78);
+          tGlide(220, 110, "sine", t + 0.38, 2.4, v * 0.58);
+          tNote(73.4, "sine", t + 0.8, 0.4, 2.5, v * 0.6);
+          break;
+        case "irregular": {
+          const bases = [200, 440, 320, 580, 170, 760, 260];
+          bases.forEach(f =>
+            tNote(f * (0.82 + Math.random() * 0.36), "square",
+              t + Math.random() * 0.52, 0.01, 0.26 + Math.random() * 0.38, v * 0.48));
+          break;
+        }
+        case "lenticular":
+          [220, 277.2, 329.6, 415.3].forEach((f, i) =>
+            tNote(f, "sine", t + i * 0.22, 0.32, 3.2, v * 0.68));
+          tNote(110, "sine", t + 0.6, 0.5, 3.5, v * 0.45);
+          break;
+        case "sphere":
+          [261.6, 392, 523.2, 784].forEach((f, i) =>
+            tNote(f, "sine", t + i * 0.09, 0.07, 3.4, v * (0.85 - i * 0.12)));
+          tNote(1046.5, "sine", t + 0.38, 0.05, 2.4, v * 0.38);
+          break;
+        case "nebula":
+          tNoise(t,       0.95, v * 0.55, 600);
+          tNoise(t + 0.3, 0.65, v * 0.35, 1200);
+          [261.6, 329.6, 392, 493.9].forEach((f, i) =>
+            tNote(f, "sine", t + 0.28 + i * 0.24, 0.35, 3.0, v * 0.62));
+          break;
+        case "vortex":
+          tGlide(1600, 55,   "sine", t,        3.0, v * 1.0);
+          tGlide(800,  36.7, "sine", t + 0.18, 2.7, v * 0.68);
+          tNoise(t, 1.8, v * 0.35, 430);
+          tNote(36.7, "sine", t + 2.0, 0.2, 2.0, v * 0.55);
+          break;
+      }
     },
   };
 }
@@ -417,32 +545,34 @@ interface SavedStar {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function AetherCanvas() {
-  const mountRef  = useRef<HTMLDivElement>(null);
-  const sceneRef  = useRef<any>({});
-  const audioRef  = useRef<ReturnType<typeof makeAudio> | null>(null);
-  const burstRef  = useRef(0);
-  const lastEnergy = useRef(0.35);
-  const starsRef  = useRef<SavedStar[]>([]);
+  const mountRef     = useRef<HTMLDivElement>(null);
+  const sceneRef     = useRef<any>({});
+  const audioRef     = useRef<ReturnType<typeof makeAudio> | null>(null);
+  const burstRef     = useRef(0);
+  const lastEnergy   = useRef(0.35);
+  const starsRef     = useRef<SavedStar[]>([]);
+  const morphCounter = useRef(0);
 
-  const [thought,    setThought]    = useState("");
-  const [whisper,    setWhisper]    = useState("I am Aether. Whisper a thought, and watch it become a galaxy.");
-  const [loading,    setLoading]    = useState(false);
-  const [form,       setForm]       = useState<FormType>("spiral");
-  const [count,      setCount]      = useState(0);
-  const [show,       setShow]       = useState(false);
-  const [sound,      setSound]      = useState(false);
-  const [panel,      setPanel]      = useState(false);
-  const [captureURL, setCaptureURL] = useState<string | null>(null);
-  const [list,       setList]       = useState<SavedStar[]>([]);
+  const [thought,      setThought]      = useState("");
+  const [whisper,      setWhisper]      = useState("I am Aether. Whisper a thought, and watch it become a galaxy.");
+  const [loading,      setLoading]      = useState(false);
+  const [form,         setForm]         = useState<FormType>("spiral");
+  const [accentColor,  setAccentColor]  = useState("#b892ff");
+  const [count,        setCount]        = useState(0);
+  const [show,         setShow]         = useState(false);
+  const [sound,        setSound]        = useState(false);
+  const [panel,        setPanel]        = useState(false);
+  const [captureURL,   setCaptureURL]   = useState<string | null>(null);
+  const [list,         setList]         = useState<SavedStar[]>([]);
+  const [inputFocused, setInputFocused] = useState(false);
+  const [morphLabel,   setMorphLabel]   = useState<{ label: string; id: number } | null>(null);
 
-  // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
 
     const N = getN();
 
-    // Renderer
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
@@ -452,12 +582,10 @@ export default function AetherCanvas() {
     renderer.setClearColor(0x050308, 1);
     mount.appendChild(renderer.domElement);
 
-    // Scene & Camera
     const scene  = new THREE.Scene();
     scene.fog    = new THREE.FogExp2(0x050308, 0.003);
     const camera = new THREE.PerspectiveCamera(60, mount.clientWidth / mount.clientHeight, 0.1, 600);
 
-    // Sprite texture
     const cv = document.createElement("canvas"); cv.width = cv.height = 128;
     const c2 = cv.getContext("2d")!;
     const g  = c2.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -471,18 +599,14 @@ export default function AetherCanvas() {
     const sprite = new THREE.CanvasTexture(cv);
 
     const tArr = new Float32Array(N);
-
-    // Pre-build all 15 forms
     const forms: Record<FormType, Float32Array> = {} as any;
     forms.spiral = buildForm("spiral", N, tArr);
-    for (const f of FORMS) {
-      if (f !== "spiral") forms[f] = buildForm(f, N);
-    }
+    for (const f of FORMS) { if (f !== "spiral") forms[f] = buildForm(f, N); }
 
-    const base    = new Float32Array(N * 3); base.set(forms.spiral);
-    const phase   = new Float32Array(N);     for (let i = 0; i < N; i++) phase[i] = Math.random() * Math.PI * 2;
-    const colCur  = new Float32Array(N * 3);
-    const colTgt  = new Float32Array(N * 3);
+    const base   = new Float32Array(N * 3); base.set(forms.spiral);
+    const phase  = new Float32Array(N);     for (let i = 0; i < N; i++) phase[i] = Math.random() * Math.PI * 2;
+    const colCur = new Float32Array(N * 3);
+    const colTgt = new Float32Array(N * 3);
 
     const applyPalette = (pal: string[], into: Float32Array) => {
       const a = hexToRGB(pal[0]), b = hexToRGB(pal[1]), c = hexToRGB(pal[2]);
@@ -494,7 +618,7 @@ export default function AetherCanvas() {
     applyPalette(FALLBACK_PALETTES[0], colCur);
     colTgt.set(colCur);
 
-    const geo = new THREE.BufferGeometry();
+    const geo  = new THREE.BufferGeometry();
     const live = new Float32Array(N * 3); live.set(forms.spiral);
     geo.setAttribute("position", new THREE.BufferAttribute(live, 3));
     geo.setAttribute("color",    new THREE.BufferAttribute(colCur, 3));
@@ -548,7 +672,7 @@ export default function AetherCanvas() {
     };
 
     let dragging = false, px = 0, py = 0, pinchD = 0, downX = 0, downY = 0, downT = 0, moved = 0;
-    const el = renderer.domElement;
+    const el  = renderer.domElement;
     const ray = new THREE.Raycaster(); (ray.params as any).Points = { threshold: 3.5 };
 
     const onDown = (e: PointerEvent) => { dragging = true; px = e.clientX; py = e.clientY; downX = px; downY = py; downT = performance.now(); moved = 0; cam.lastInput = downT; };
@@ -680,8 +804,8 @@ export default function AetherCanvas() {
       const displayEnergy = Math.max(energyCur, burst);
 
       spin += (0.06 + displayEnergy * 0.5) * dt;
-      points.rotation.y   = spin;
-      bgStars.rotation.y  = spin * 0.06;
+      points.rotation.y    = spin;
+      bgStars.rotation.y   = spin * 0.06;
       memPoints.rotation.y = spin * 0.12;
 
       const amp = displayEnergy * 8;
@@ -692,9 +816,9 @@ export default function AetherCanvas() {
         base[j+1] += (currentTarget[j+1] - base[j+1]) * 0.04;
         base[j+2] += (currentTarget[j+2] - base[j+2]) * 0.04;
         const ph = phase[i];
-        posArr[j]   = base[j]   + Math.sin(t * spd       + ph)        * amp;
-        posArr[j+1] = base[j+1] + Math.sin(t * spd * 1.3 + ph * 1.7)  * amp;
-        posArr[j+2] = base[j+2] + Math.cos(t * spd * 0.9 + ph)        * amp;
+        posArr[j]   = base[j]   + Math.sin(t * spd       + ph)       * amp;
+        posArr[j+1] = base[j+1] + Math.sin(t * spd * 1.3 + ph * 1.7) * amp;
+        posArr[j+2] = base[j+2] + Math.cos(t * spd * 0.9 + ph)       * amp;
       }
       geo.attributes.position.needsUpdate = true;
 
@@ -734,7 +858,11 @@ export default function AetherCanvas() {
     };
   }, []);
 
-  // ── React logic ─────────────────────────────────────────────────────────────
+  const showMorphLabel = useCallback((fm: FormType) => {
+    const id = ++morphCounter.current;
+    setMorphLabel({ label: FORM_LABELS[fm], id });
+    setTimeout(() => setMorphLabel(m => (m?.id === id ? null : m)), 2400);
+  }, []);
 
   const remember = useCallback((s: SavedStar) => {
     starsRef.current = [...starsRef.current, s].slice(-CAP);
@@ -747,11 +875,13 @@ export default function AetherCanvas() {
   const applyResult = useCallback((pal: string[], fm: FormType, en: number, text: string, save?: string) => {
     sceneRef.current.morph?.(pal, fm, en);
     setForm(fm);
+    setAccentColor(pal[2] || "#b892ff");
     lastEnergy.current = en;
-    if (audioRef.current) { audioRef.current.energy(en); audioRef.current.pluck(en); }
+    if (audioRef.current) audioRef.current.transition(fm, en);
+    showMorphLabel(fm);
     if (save) remember({ id: Date.now(), thought: save, whisper: text, palette: pal, form: fm, energy: en, pos: starPos() });
     setWhisper(text);
-  }, [remember]);
+  }, [remember, showMorphLabel]);
 
   const fallback = useCallback((text: string) => {
     const h = hashStr(text || "void");
@@ -791,68 +921,122 @@ export default function AetherCanvas() {
   }, [thought, loading, applyResult, fallback]);
 
   const toggleSound = () => {
-    if (!audioRef.current) { audioRef.current = makeAudio(); if (audioRef.current) audioRef.current.energy(lastEnergy.current); }
+    if (!audioRef.current) audioRef.current = makeAudio();
     if (!audioRef.current) return;
-    if (sound) { audioRef.current.off(); setSound(false); } else { audioRef.current.on(); setSound(true); }
+    if (sound) { audioRef.current.off(); setSound(false); }
+    else        { audioRef.current.on();  setSound(true); }
   };
 
   const revisit = useCallback((s: SavedStar) => {
     sceneRef.current.morph?.(s.palette, s.form, s.energy);
     setForm(s.form);
+    setAccentColor(s.palette[2] || "#b892ff");
     setWhisper(s.whisper);
     lastEnergy.current = s.energy;
-    if (audioRef.current) { audioRef.current.energy(s.energy); audioRef.current.pluck(s.energy); }
+    if (audioRef.current) audioRef.current.transition(s.form, s.energy);
+    showMorphLabel(s.form);
     setPanel(false);
-  }, []);
+  }, [showMorphLabel]);
 
   useEffect(() => { sceneRef.current.onStarTap = (i: number) => { const s = starsRef.current[i]; if (s) revisit(s); }; });
 
-  const capture = () => { try { setCaptureURL(sceneRef.current.snapshot?.(whisper) ?? null); } catch {} };
+  const capture    = () => { try { setCaptureURL(sceneRef.current.snapshot?.(whisper) ?? null); } catch {} };
   const clearStars = () => { starsRef.current = []; sceneRef.current.rebuildStars?.([]); setList([]); setCount(0); };
 
-  const ui = { opacity: show ? 1 : 0, transition: "opacity 1s ease" };
+  const ui  = { opacity: show ? 1 : 0, transition: "opacity 1.2s ease" };
+  const a44 = accentColor + "44";
+  const a66 = accentColor + "66";
+  const a88 = accentColor + "88";
+  const abb = accentColor + "bb";
 
-  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#050308", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
       <div ref={mountRef} style={{ position: "absolute", inset: 0, touchAction: "none", cursor: "grab" }} />
 
-      {/* Radial vignette overlay */}
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "radial-gradient(circle at 50% 42%, transparent 32%, rgba(5,3,8,.6) 100%)" }} />
+      {/* Vignette */}
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "radial-gradient(circle at 50% 42%, transparent 32%, rgba(5,3,8,.62) 100%)" }} />
+
+      {/* Galaxy type morph reveal */}
+      <AnimatePresence>
+        {morphLabel && (
+          <motion.div
+            key={morphLabel.id}
+            initial={{ opacity: 0, scale: 0.93 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.06, transition: { duration: 1.8, ease: "easeIn" } }}
+            transition={{ duration: 0.38 }}
+            style={{
+              position: "absolute", inset: 0, display: "flex",
+              alignItems: "center", justifyContent: "center",
+              pointerEvents: "none", zIndex: 3, padding: "0 24px",
+            }}
+          >
+            <div style={{
+              color: accentColor,
+              fontSize: "clamp(18px, 5vw, 60px)",
+              letterSpacing: "0.46em",
+              fontWeight: 200,
+              textShadow: `0 0 50px ${abb}, 0 0 110px ${a44}`,
+              fontFamily: "'Helvetica Neue', Arial, sans-serif",
+              textAlign: "center",
+            }}>
+              {morphLabel.label}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Header */}
       <div style={{ position: "absolute", top: 22, left: 24, pointerEvents: "none", ...ui }}>
-        <div style={{ color: "#e9e6ff", fontSize: 13, letterSpacing: "0.62em", fontWeight: 300 }}>A E T H E R</div>
-        <div style={{ color: "rgba(200,196,235,.4)", fontSize: 9, letterSpacing: "0.32em", marginTop: 5 }}>A LIVING COSMOS</div>
+        <div style={{ color: "#eceaff", fontSize: 13, letterSpacing: "0.62em", fontWeight: 300, textShadow: `0 0 28px ${a66}` }}>
+          A E T H E R
+        </div>
+        <div style={{ color: "rgba(200,196,235,.38)", fontSize: 9, letterSpacing: "0.32em", marginTop: 5 }}>A LIVING COSMOS</div>
       </div>
 
       {/* Controls — top right */}
       <div style={{ position: "absolute", top: 22, right: 24, display: "flex", flexDirection: "column", alignItems: "flex-end", ...ui }}>
-        <div style={{ color: "rgba(200,196,235,.45)", fontSize: 9, letterSpacing: "0.22em", marginBottom: 2, pointerEvents: "none" }}>
+        <div style={{
+          color: accentColor, fontSize: 9, letterSpacing: "0.28em", marginBottom: 5,
+          pointerEvents: "none", fontWeight: 400,
+          textShadow: `0 0 14px ${a88}`,
+          transition: "color 0.8s ease, text-shadow 0.8s ease",
+        }}>
           {FORM_LABELS[form]}
         </div>
-        {([
+        {(([  
           ["SOUND · " + (sound ? "ON" : "OFF"), toggleSound],
-          ["STARS · " + count,                  () => setPanel((p) => !p)],
+          ["STARS · " + count,                  () => setPanel(p => !p)],
           ["CAPTURE ✦",                          capture],
-        ] as [string, () => void][]).map(([label, fn]) => (
+        ]) as [string, () => void][]).map(([label, fn]) => (
           <button key={label} onClick={fn}
-            style={{ display: "block", background: "none", border: "none", color: "rgba(214,210,245,.65)", fontSize: 10, letterSpacing: "0.2em", padding: "5px 0", cursor: "pointer", textAlign: "right", fontFamily: "inherit" }}>
+            style={{ display: "block", background: "none", border: "none", color: "rgba(214,210,245,.6)", fontSize: 10, letterSpacing: "0.2em", padding: "5px 0", cursor: "pointer", textAlign: "right", fontFamily: "inherit" }}>
             {label}
           </button>
         ))}
       </div>
 
-      {/* Whisper display */}
-      <div style={{ position: "absolute", left: 0, right: 0, top: "20%", display: "flex", justifyContent: "center", padding: "0 32px", pointerEvents: "none" }}>
+      {/* Whisper — premium typography */}
+      <div style={{ position: "absolute", left: 0, right: 0, top: "18%", display: "flex", justifyContent: "center", padding: "0 36px", pointerEvents: "none" }}>
         <AnimatePresence mode="wait">
           <motion.div
             key={loading ? "__loading__" : whisper}
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 1.1, ease: "easeInOut" }}
-            style={{ maxWidth: 640, textAlign: "center", color: "#f3f0ff", fontFamily: "Georgia, 'Times New Roman', serif", fontStyle: "italic", fontSize: "clamp(18px, 3.2vw, 30px)", lineHeight: 1.5, textShadow: "0 0 32px rgba(120,90,220,.6)" }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
+            style={{
+              maxWidth: 660,
+              textAlign: "center",
+              color: "#f5f2ff",
+              fontFamily: "Georgia, 'Times New Roman', 'Palatino Linotype', serif",
+              fontStyle: "italic",
+              fontSize: "clamp(19px, 3.4vw, 34px)",
+              lineHeight: 1.62,
+              letterSpacing: "0.012em",
+              textShadow: `0 0 44px ${a66}, 0 0 90px ${a44}, 0 2px 4px rgba(0,0,0,.5)`,
+              transition: "text-shadow 0.9s ease",
+            }}
           >
             {loading ? "Aether is contemplating…" : whisper}
           </motion.div>
@@ -866,15 +1050,45 @@ export default function AetherCanvas() {
             value={thought}
             disabled={loading}
             rows={1}
-            onChange={(e) => setThought(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+            onChange={e => setThought(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
             placeholder="whisper a thought to the cosmos…"
-            style={{ flex: 1, background: "rgba(18,14,34,.6)", backdropFilter: "blur(12px)", border: "1px solid rgba(150,130,230,.28)", borderRadius: 999, color: "#eee9ff", fontSize: 15, padding: "13px 22px", fontFamily: "inherit", resize: "none", outline: "none", lineHeight: 1.4 }}
+            style={{
+              flex: 1,
+              background: "rgba(14,10,28,.65)",
+              backdropFilter: "blur(14px)",
+              border: `1px solid ${inputFocused ? a66 : "rgba(150,130,230,.26)"}`,
+              borderRadius: 999,
+              color: "#eee9ff",
+              fontSize: 15,
+              padding: "13px 22px",
+              fontFamily: "inherit",
+              resize: "none",
+              outline: "none",
+              lineHeight: 1.4,
+              boxShadow: inputFocused ? `0 0 24px ${a44}, inset 0 0 12px rgba(0,0,0,.3)` : "none",
+              transition: "border-color 0.4s ease, box-shadow 0.4s ease",
+            }}
           />
           <button
             onClick={ask}
             disabled={loading}
-            style={{ background: "rgba(130,100,255,.16)", border: "1px solid rgba(160,140,255,.4)", color: "#e9e4ff", borderRadius: 999, padding: "13px 24px", fontSize: 13, letterSpacing: "0.18em", cursor: loading ? "default" : "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }}
+            style={{
+              background: `linear-gradient(135deg, ${a44}, ${a88}22)`,
+              border: `1px solid ${a66}`,
+              color: "#ece8ff",
+              borderRadius: 999,
+              padding: "13px 24px",
+              fontSize: 13,
+              letterSpacing: "0.18em",
+              cursor: loading ? "default" : "pointer",
+              whiteSpace: "nowrap",
+              fontFamily: "inherit",
+              boxShadow: loading ? "none" : `0 0 22px ${a44}`,
+              transition: "all 0.4s ease",
+            }}
           >
             {loading ? "···" : "RELEASE"}
           </button>
@@ -882,7 +1096,7 @@ export default function AetherCanvas() {
       </div>
 
       {/* Hint */}
-      <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", color: "rgba(190,186,225,.28)", fontSize: 9, letterSpacing: "0.22em", pointerEvents: "none" }}>
+      <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", color: "rgba(190,186,225,.25)", fontSize: 9, letterSpacing: "0.22em", pointerEvents: "none" }}>
         DRAG TO ORBIT · PINCH TO ZOOM · TAP A STAR TO REVISIT
       </div>
 
@@ -892,7 +1106,7 @@ export default function AetherCanvas() {
           <motion.div
             initial={{ x: 340 }} animate={{ x: 0 }} exit={{ x: 340 }}
             transition={{ type: "spring", damping: 28, stiffness: 280 }}
-            style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "min(320px, 84vw)", background: "rgba(8,5,16,.88)", backdropFilter: "blur(18px)", borderLeft: "1px solid rgba(150,130,230,.18)", display: "flex", flexDirection: "column", zIndex: 5 }}
+            style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "min(320px, 84vw)", background: "rgba(7,4,14,.9)", backdropFilter: "blur(20px)", borderLeft: `1px solid ${a44}`, display: "flex", flexDirection: "column", zIndex: 5 }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 22px 12px" }}>
               <div style={{ color: "#e9e6ff", fontSize: 11, letterSpacing: "0.3em" }}>YOUR CONSTELLATION</div>
@@ -900,24 +1114,24 @@ export default function AetherCanvas() {
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "0 12px" }}>
               {list.length === 0 && (
-                <div style={{ color: "rgba(200,196,235,.38)", fontSize: 13, padding: "22px 12px", fontStyle: "italic", fontFamily: "Georgia, serif" }}>
+                <div style={{ color: "rgba(200,196,235,.36)", fontSize: 13, padding: "22px 12px", fontStyle: "italic", fontFamily: "Georgia, serif", lineHeight: 1.6 }}>
                   No stars yet. Every thought you release becomes one.
                 </div>
               )}
-              {list.map((s) => (
+              {list.map(s => (
                 <div key={s.id} onClick={() => revisit(s)}
                   style={{ padding: "12px 12px", borderRadius: 10, cursor: "pointer", marginBottom: 3 }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 8, background: s.palette[2], boxShadow: `0 0 10px ${s.palette[2]}`, display: "inline-block" }} />
-                    <span style={{ color: "rgba(200,196,235,.4)", fontSize: 8, letterSpacing: "0.2em" }}>{FORM_LABELS[s.form] ?? s.form.toUpperCase()}</span>
+                    <span style={{ width: 8, height: 8, borderRadius: 8, background: s.palette[2], boxShadow: `0 0 10px ${s.palette[2]}`, display: "inline-block", flexShrink: 0 }} />
+                    <span style={{ color: s.palette[2], fontSize: 8, letterSpacing: "0.22em", opacity: 0.8 }}>{FORM_LABELS[s.form] ?? s.form.toUpperCase()}</span>
                   </div>
-                  <div style={{ color: "#ece8ff", fontSize: 13.5, fontFamily: "Georgia, serif", fontStyle: "italic", lineHeight: 1.45 }}>{s.whisper}</div>
+                  <div style={{ color: "#ece8ff", fontSize: 13.5, fontFamily: "Georgia, serif", fontStyle: "italic", lineHeight: 1.5 }}>{s.whisper}</div>
                 </div>
               ))}
             </div>
             {list.length > 0 && (
               <button onClick={clearStars}
-                style={{ margin: "10px 22px 20px", background: "none", border: "1px solid rgba(180,120,140,.3)", color: "rgba(230,170,190,.65)", borderRadius: 999, padding: 9, fontSize: 9.5, letterSpacing: "0.2em", cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ margin: "10px 22px 20px", background: "none", border: "1px solid rgba(180,120,140,.28)", color: "rgba(230,170,190,.6)", borderRadius: 999, padding: 9, fontSize: 9.5, letterSpacing: "0.2em", cursor: "pointer", fontFamily: "inherit" }}>
                 DISSOLVE ALL STARS
               </button>
             )}
@@ -930,19 +1144,19 @@ export default function AetherCanvas() {
         {captureURL && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ position: "absolute", inset: 0, background: "rgba(3,2,6,.93)", backdropFilter: "blur(10px)", zIndex: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
+            style={{ position: "absolute", inset: 0, background: "rgba(3,2,6,.94)", backdropFilter: "blur(12px)", zIndex: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
           >
-            <img src={captureURL} alt="A whisper to the void" style={{ maxHeight: "72vh", maxWidth: "92vw", borderRadius: 14, boxShadow: "0 0 70px rgba(120,90,220,.45)" }} />
-            <div style={{ color: "rgba(220,216,255,.65)", fontSize: 12, letterSpacing: "0.1em", marginTop: 16, textAlign: "center" }}>
+            <img src={captureURL} alt="A whisper to the void" style={{ maxHeight: "72vh", maxWidth: "92vw", borderRadius: 14, boxShadow: `0 0 80px ${a44}` }} />
+            <div style={{ color: "rgba(220,216,255,.6)", fontSize: 12, letterSpacing: "0.1em", marginTop: 16, textAlign: "center" }}>
               Long-press to save · ready for stories & reels
             </div>
             <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
               <a href={captureURL} download="aether-whisper.png"
-                style={{ background: "rgba(130,100,255,.16)", border: "1px solid rgba(160,140,255,.4)", color: "#e9e4ff", borderRadius: 999, padding: "11px 24px", fontSize: 12, letterSpacing: "0.16em", textDecoration: "none" }}>
+                style={{ background: a44, border: `1px solid ${a66}`, color: "#e9e4ff", borderRadius: 999, padding: "11px 24px", fontSize: 12, letterSpacing: "0.16em", textDecoration: "none" }}>
                 DOWNLOAD
               </a>
               <button onClick={() => setCaptureURL(null)}
-                style={{ background: "none", border: "1px solid rgba(150,130,230,.3)", color: "rgba(220,216,255,.65)", borderRadius: 999, padding: "11px 22px", fontSize: 12, letterSpacing: "0.16em", cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ background: "none", border: "1px solid rgba(150,130,230,.28)", color: "rgba(220,216,255,.62)", borderRadius: 999, padding: "11px 22px", fontSize: 12, letterSpacing: "0.16em", cursor: "pointer", fontFamily: "inherit" }}>
                 CLOSE
               </button>
             </div>
