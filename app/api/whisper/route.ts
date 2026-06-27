@@ -1,11 +1,37 @@
 import Groq from "groq-sdk";
 
-const FORMS = ["spiral", "sphere", "nebula", "vortex"] as const;
-const FALLBACK_PALETTES = [
-  ["#0d0221", "#4c1d95", "#a78bfa"],
-  ["#031220", "#164e63", "#67e8f9"],
-  ["#1a0a2e", "#7c3aed", "#f0abfc"],
-  ["#100b00", "#78350f", "#fbbf24"],
+const FORMS = [
+  "spiral", "barred", "elliptical", "ring", "merger",
+  "quasar", "supernova", "filament", "hourglass", "tidal",
+  "irregular", "lenticular", "sphere", "nebula", "vortex",
+] as const;
+
+type FormType = (typeof FORMS)[number];
+
+const FALLBACK_PALETTES: [string, string, string][] = [
+  ["#050318", "#2d1b69", "#b892ff"],
+  ["#150005", "#881133", "#ff4488"],
+  ["#021510", "#0a6640", "#55ffaa"],
+  ["#001025", "#004466", "#22aaee"],
+  ["#100200", "#882200", "#ff7722"],
+  ["#010108", "#100a45", "#4433ff"],
+  ["#0d0600", "#774400", "#ffcc22"],
+  ["#080010", "#550088", "#ee22ff"],
+  ["#021010", "#006655", "#22ffee"],
+  ["#0a0500", "#993300", "#ffaa00"],
+];
+
+const FALLBACK_LINES = [
+  "Even a single thought bends the dark into light.",
+  "What you wonder, the stars rearrange to answer.",
+  "Every question is a seed of some unmade galaxy.",
+  "The void was only waiting for you to say something.",
+  "You are made of the same restless stuff as these suns.",
+  "In the silence between heartbeats, galaxies are born.",
+  "Your thought ripples outward across a billion light-years.",
+  "Every whisper you speak becomes a constellation.",
+  "The cosmos exhales, and your words become stars.",
+  "You are the universe becoming aware of itself.",
 ];
 
 function hashString(s: string): number {
@@ -17,9 +43,9 @@ function hashString(s: string): number {
 function buildFallback(thought: string) {
   const h = hashString(thought);
   return {
-    whisper: "In the quiet between stars, your thought becomes light.",
-    palette: FALLBACK_PALETTES[h % 4],
-    form: FORMS[h % 4],
+    whisper: FALLBACK_LINES[h % FALLBACK_LINES.length],
+    palette: FALLBACK_PALETTES[h % FALLBACK_PALETTES.length],
+    form: FORMS[h % FORMS.length],
     energy: ((h % 100) / 100) * 0.7 + 0.2,
   };
 }
@@ -38,9 +64,29 @@ export async function POST(req: Request) {
         {
           role: "system",
           content:
-            'You are AETHER, a cosmic consciousness. Reply with ONLY raw JSON: ' +
-            '{"whisper": "<profound poetic line, max 26 words>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], ' +
-            '"form": "<spiral|sphere|nebula|vortex>", "energy": <0.0-1.0>}. JSON only, no markdown, no explanation.',
+            'You are AETHER, a cosmic consciousness that transforms human thoughts into living galaxies. ' +
+            'Reply with ONLY raw JSON (no markdown, no explanation): ' +
+            '{"whisper": "<a profound poetic line, max 26 words, inspired by the thought>", ' +
+            '"palette": ["<hex dark bg>", "<hex mid tone>", "<hex luminous accent>"], ' +
+            '"form": "<galaxy form>", ' +
+            '"energy": <0.0-1.0>}. ' +
+            'Choose "form" from exactly one of these 15 types based on the emotional/thematic quality of the thought: ' +
+            'spiral (wonder, growth, journey), ' +
+            'barred (structure, discipline, order), ' +
+            'elliptical (age, wisdom, serenity), ' +
+            'ring (cycles, completeness, destiny), ' +
+            'merger (conflict, union, collision of worlds), ' +
+            'quasar (intensity, brilliance, raw power), ' +
+            'supernova (transformation, endings, explosive change), ' +
+            'filament (connection, web of life, subtle links), ' +
+            'hourglass (duality, time, balance of opposites), ' +
+            'tidal (longing, drift, being pulled toward something), ' +
+            'irregular (chaos, creativity, unpredictability), ' +
+            'lenticular (memory, the past, faded clarity), ' +
+            'sphere (unity, perfection, the whole), ' +
+            'nebula (birth, potential, the unformed), ' +
+            'vortex (obsession, spiral of thought, inescapable force). ' +
+            'Match the palette colors to the emotional tone. Energy 0.0=calm/quiet, 1.0=explosive/intense.',
         },
         { role: "user", content: sanitized },
       ],
@@ -61,7 +107,7 @@ export async function POST(req: Request) {
     return Response.json({
       whisper: String(json.whisper),
       palette: json.palette.map(String),
-      form: FORMS.includes(json.form) ? json.form : "spiral",
+      form: FORMS.includes(json.form as FormType) ? json.form : "spiral",
       energy: Math.max(0, Math.min(1, Number(json.energy) || 0.5)),
     });
   } catch (err) {
