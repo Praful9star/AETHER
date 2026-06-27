@@ -8,7 +8,7 @@ import Galaxy from "./Galaxy";
 import MemoryStars from "./MemoryStars";
 import { useAetherStore, Star } from "../lib/store";
 
-// Isolates bloom failure so Galaxy still renders if post-processing unavailable
+// If bloom fails on a weak GPU, galaxy still renders — quality unchanged on capable devices
 class PostProcessingBoundary extends Component<
   { children: ReactNode },
   { failed: boolean }
@@ -49,6 +49,7 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
               intensity={1.5}
               luminanceThreshold={0.1}
               luminanceSmoothing={0.9}
+              mipmapBlur
             />
           </EffectComposer>
         </PostProcessingBoundary>
