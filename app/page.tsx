@@ -33,16 +33,24 @@ export default function Home() {
   );
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-[#050308]" style={{ touchAction: "none" }}>
+    <main
+      className="relative w-screen h-screen overflow-hidden bg-[#050308]"
+      style={{ touchAction: "none" }}
+    >
       <div className="absolute inset-0">
         <ErrorBoundary>
           <Cosmos onStarClick={handleStarClick} />
         </ErrorBoundary>
       </div>
+
       <Overlay />
       <Constellation onSelectStar={handleStarClick} />
       <CaptureModal />
-      <a href="/void" className="absolute bottom-6 left-6 text-white/15 hover:text-white/40 transition-colors text-xs tracking-widest">
+
+      <a
+        href="/void"
+        className="absolute bottom-6 left-6 text-white/15 hover:text-white/40 transition-colors text-xs tracking-widest"
+      >
         ∞ THE VOID
       </a>
     </main>

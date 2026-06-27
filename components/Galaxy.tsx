@@ -21,8 +21,8 @@ interface GalaxyProps {
 export default function Galaxy({ form, palette, energy, particleCount = N }: GalaxyProps) {
   const count = particleCount;
   const meshRef = useRef<THREE.Points>(null);
-  const geoRef = useRef<THREE.BufferGeometry>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
+  const geoRef = useRef<THREE.BufferGeometry>(null);
 
   const { positions, randArr, tArr } = useMemo(() => {
     const pos = generateForm("spiral", count);
@@ -40,6 +40,7 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
   const mixProgressRef = useRef(1);
   const prevFormRef = useRef<FormType>("spiral");
 
+  // Imperatively set geometry attributes to avoid R3F v9 JSX bufferAttribute issues
   useLayoutEffect(() => {
     const geo = geoRef.current;
     if (!geo) return;
@@ -53,8 +54,10 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
   useEffect(() => {
     if (form === prevFormRef.current) return;
     prevFormRef.current = form;
+
     const geo = geoRef.current;
     if (!geo) return;
+
     const currentMix = mixProgressRef.current;
     const currentFrom = fromRef.current;
     const currentTo = toRef.current;
@@ -66,6 +69,7 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
     fromRef.current = snapped;
     toRef.current = generateForm(form, count);
     mixProgressRef.current = 0;
+
     const fromAttr = geo.getAttribute("aFrom") as THREE.BufferAttribute;
     const toAttr = geo.getAttribute("aTo") as THREE.BufferAttribute;
     if (fromAttr) { fromAttr.array.set(fromRef.current); fromAttr.needsUpdate = true; }
@@ -101,6 +105,7 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
   useFrame(({ clock }) => {
     if (!materialRef.current) return;
     materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
+
     if (mixProgressRef.current < 1) {
       mixProgressRef.current = Math.min(1, mixProgressRef.current + 0.008);
       materialRef.current.uniforms.uMix.value = mixProgressRef.current;

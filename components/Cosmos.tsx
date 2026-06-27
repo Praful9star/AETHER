@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, Suspense, ReactNode } from "react";
+import { Suspense, Component, ReactNode } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -9,14 +9,21 @@ import MemoryStars from "./MemoryStars";
 import { useAetherStore, Star } from "../lib/store";
 import { N } from "../lib/forms";
 
-class PostProcessingBoundary extends Component<
-  { children: ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
+interface CosmosProps {
+  onStarClick: (star: Star) => void;
+}
+
+class PostProcessingBoundary extends Component<{ children: ReactNode }, { crashed: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { crashed: false };
+  }
+  static getDerivedStateFromError() {
+    return { crashed: true };
+  }
   render() {
-    return this.state.failed ? null : this.props.children;
+    if (this.state.crashed) return null;
+    return this.props.children;
   }
 }
 
@@ -28,13 +35,10 @@ function getDeviceProfile() {
     const gl = testCanvas.getContext("webgl2");
     if (!gl) return { isMobile, hasWebGL2: false, noWebGLReason: "webgl2 context returned null" };
     return { isMobile, hasWebGL2: true, noWebGLReason: "" };
-  } catch (e: any) {
-    return { isMobile, hasWebGL2: false, noWebGLReason: e?.message ?? "webgl2 check threw" };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "webgl2 check threw";
+    return { isMobile, hasWebGL2: false, noWebGLReason: msg };
   }
-}
-
-interface CosmosProps {
-  onStarClick: (star: Star) => void;
 }
 
 export default function Cosmos({ onStarClick }: CosmosProps) {
@@ -45,7 +49,7 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050308] gap-2">
         <p className="text-white/20 text-xs tracking-widest">THE COSMOS IS RESTING</p>
-        <p className="text-red-400/50 text-xs">WebGL2 unavailable: {noWebGLReason}</p>
+        <p className="text-red-400/40 text-xs text-center px-4">WebGL2 unavailable: {noWebGLReason}</p>
       </div>
     );
   }
@@ -56,7 +60,11 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
     <Canvas
       style={{ background: "#050308", width: "100%", height: "100%" }}
       camera={{ position: [0, 10, 40], fov: 60, near: 0.1, far: 1000 }}
-      gl={{ antialias: false, powerPreference: "high-performance", preserveDrawingBuffer: true }}
+      gl={{
+        antialias: false,
+        powerPreference: "high-performance",
+        preserveDrawingBuffer: true,
+      }}
     >
       <Suspense fallback={null}>
         <Galaxy form={form} palette={palette} energy={energy} particleCount={particleCount} />
@@ -65,15 +73,24 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
         {!isMobile && (
           <PostProcessingBoundary>
             <EffectComposer>
-              <Bloom intensity={1.5} luminanceThreshold={0.1} luminanceSmoothing={0.9} mipmapBlur />
+              <Bloom
+                intensity={1.5}
+                luminanceThreshold={0.1}
+                luminanceSmoothing={0.9}
+                mipmapBlur
+              />
             </EffectComposer>
           </PostProcessingBoundary>
         )}
 
         <OrbitControls
-          enableDamping dampingFactor={0.05}
-          autoRotate autoRotateSpeed={0.3}
-          enablePan={false} minDistance={5} maxDistance={80}
+          enableDamping
+          dampingFactor={0.05}
+          autoRotate
+          autoRotateSpeed={0.3}
+          enablePan={false}
+          minDistance={5}
+          maxDistance={80}
         />
       </Suspense>
     </Canvas>
