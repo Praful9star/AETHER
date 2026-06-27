@@ -53,10 +53,8 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
   useEffect(() => {
     if (form === prevFormRef.current) return;
     prevFormRef.current = form;
-
     const geo = geoRef.current;
     if (!geo) return;
-
     const currentMix = mixProgressRef.current;
     const currentFrom = fromRef.current;
     const currentTo = toRef.current;
@@ -68,7 +66,6 @@ export default function Galaxy({ form, palette, energy, particleCount = N }: Gal
     fromRef.current = snapped;
     toRef.current = generateForm(form, count);
     mixProgressRef.current = 0;
-
     const fromAttr = geo.getAttribute("aFrom") as THREE.BufferAttribute;
     const toAttr = geo.getAttribute("aTo") as THREE.BufferAttribute;
     if (fromAttr) { fromAttr.array.set(fromRef.current); fromAttr.needsUpdate = true; }
