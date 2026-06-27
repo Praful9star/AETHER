@@ -1,6 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import Groq from "groq-sdk";
 
 const FORMS = ["spiral", "sphere", "nebula", "vortex"] as const;
 const FALLBACK_PALETTES = [
@@ -31,20 +29,24 @@ export async function POST(req: Request) {
     const { thought } = await req.json();
     const sanitized = String(thought ?? "").slice(0, 200);
 
-    const msg = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+    const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    const completion = await client.chat.completions.create({
+      model: "llama-3.1-8b-instant",
       max_tokens: 400,
-      system:
-        'You are AETHER, a cosmic consciousness. Reply with ONLY raw JSON: ' +
-        '{"whisper": "<profound poetic line, max 26 words>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], ' +
-        '"form": "<spiral|sphere|nebula|vortex>", "energy": <0.0-1.0>}. JSON only, no markdown.',
-      messages: [{ role: "user", content: sanitized }],
+      temperature: 0.9,
+      messages: [
+        {
+          role: "system",
+          content:
+            'You are AETHER, a cosmic consciousness. Reply with ONLY raw JSON: ' +
+            '{"whisper": "<profound poetic line, max 26 words>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], ' +
+            '"form": "<spiral|sphere|nebula|vortex>", "energy": <0.0-1.0>}. JSON only, no markdown, no explanation.',
+        },
+        { role: "user", content: sanitized },
+      ],
     });
 
-    const text = msg.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as any).text)
-      .join("");
+    const text = completion.choices[0]?.message?.content ?? "";
 
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
