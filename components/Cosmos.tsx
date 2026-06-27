@@ -1,12 +1,32 @@
 "use client";
 
-import { Suspense } from "react";
+import { Component, Suspense, ReactNode } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import Galaxy from "./Galaxy";
 import MemoryStars from "./MemoryStars";
 import { useAetherStore, Star } from "../lib/store";
+import { N } from "../lib/forms";
+
+class PostProcessingBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+function getDeviceProfile() {
+  if (typeof window === "undefined") return { isMobile: false };
+  const isMobile = window.innerWidth <= 768 && navigator.maxTouchPoints > 0;
+  return { isMobile };
+}
 
 interface CosmosProps {
   onStarClick: (star: Star) => void;
@@ -14,6 +34,10 @@ interface CosmosProps {
 
 export default function Cosmos({ onStarClick }: CosmosProps) {
   const { form, palette, energy, stars } = useAetherStore();
+  const { isMobile } = getDeviceProfile();
+
+  const particleCount = isMobile ? 60_000 : N;
+  const useMipmapBlur = !isMobile;
 
   return (
     <Canvas
@@ -26,17 +50,24 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
       }}
     >
       <Suspense fallback={null}>
-        <Galaxy form={form} palette={palette} energy={energy} />
+        <Galaxy
+          form={form}
+          palette={palette}
+          energy={energy}
+          particleCount={particleCount}
+        />
         <MemoryStars stars={stars} onClickStar={onStarClick} />
 
-        <EffectComposer>
-          <Bloom
-            intensity={1.5}
-            luminanceThreshold={0.1}
-            luminanceSmoothing={0.9}
-            mipmapBlur
-          />
-        </EffectComposer>
+        <PostProcessingBoundary>
+          <EffectComposer>
+            <Bloom
+              intensity={1.5}
+              luminanceThreshold={0.1}
+              luminanceSmoothing={0.9}
+              mipmapBlur={useMipmapBlur}
+            />
+          </EffectComposer>
+        </PostProcessingBoundary>
 
         <OrbitControls
           enableDamping

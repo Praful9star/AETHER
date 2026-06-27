@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useMemo, useEffect } from "react";
+import { useRef, useMemo, useEffect, useLayoutEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { vertexShader, fragmentShader } from "../lib/shaders";
@@ -15,52 +15,65 @@ interface GalaxyProps {
   form: FormType;
   palette: [string, string, string];
   energy: number;
+  particleCount?: number;
 }
 
-export default function Galaxy({ form, palette, energy }: GalaxyProps) {
+export default function Galaxy({ form, palette, energy, particleCount = N }: GalaxyProps) {
+  const count = particleCount;
   const meshRef = useRef<THREE.Points>(null);
+  const geoRef = useRef<THREE.BufferGeometry>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
   const { positions, randArr, tArr } = useMemo(() => {
-    const pos = generateForm("spiral", N);
-    const rand = new Float32Array(N);
-    const t = new Float32Array(N);
-    for (let i = 0; i < N; i++) {
+    const pos = generateForm("spiral", count);
+    const rand = new Float32Array(count);
+    const t = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
       rand[i] = Math.random();
       t[i] = Math.random();
     }
     return { positions: pos, randArr: rand, tArr: t };
-  }, []);
+  }, [count]);
 
   const fromRef = useRef<Float32Array>(positions.slice());
   const toRef = useRef<Float32Array>(positions.slice());
   const mixProgressRef = useRef(1);
   const prevFormRef = useRef<FormType>("spiral");
 
+  useLayoutEffect(() => {
+    const geo = geoRef.current;
+    if (!geo) return;
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute("aFrom", new THREE.BufferAttribute(fromRef.current, 3));
+    geo.setAttribute("aTo", new THREE.BufferAttribute(toRef.current, 3));
+    geo.setAttribute("aRand", new THREE.BufferAttribute(randArr, 1));
+    geo.setAttribute("aT", new THREE.BufferAttribute(tArr, 1));
+  }, [positions, randArr, tArr]);
+
   useEffect(() => {
     if (form === prevFormRef.current) return;
     prevFormRef.current = form;
 
-    const geo = meshRef.current?.geometry;
+    const geo = geoRef.current;
     if (!geo) return;
 
     const currentMix = mixProgressRef.current;
     const currentFrom = fromRef.current;
     const currentTo = toRef.current;
-    const snapped = new Float32Array(N * 3);
-    for (let i = 0; i < N * 3; i++) {
+    const snapped = new Float32Array(count * 3);
+    for (let i = 0; i < count * 3; i++) {
       const t = Math.min(1, currentMix);
       snapped[i] = currentFrom[i] + (currentTo[i] - currentFrom[i]) * t;
     }
     fromRef.current = snapped;
-    toRef.current = generateForm(form, N);
+    toRef.current = generateForm(form, count);
     mixProgressRef.current = 0;
 
     const fromAttr = geo.getAttribute("aFrom") as THREE.BufferAttribute;
     const toAttr = geo.getAttribute("aTo") as THREE.BufferAttribute;
     if (fromAttr) { fromAttr.array.set(fromRef.current); fromAttr.needsUpdate = true; }
     if (toAttr) { toAttr.array.set(toRef.current); toAttr.needsUpdate = true; }
-  }, [form]);
+  }, [form, count]);
 
   useEffect(() => {
     if (!materialRef.current) return;
@@ -97,21 +110,9 @@ export default function Galaxy({ form, palette, energy }: GalaxyProps) {
     }
   });
 
-  const posAttr = useMemo(() => new THREE.BufferAttribute(positions, 3), [positions]);
-  const fromAttr = useMemo(() => new THREE.BufferAttribute(fromRef.current, 3), []);
-  const toAttr = useMemo(() => new THREE.BufferAttribute(toRef.current, 3), []);
-  const randAttr = useMemo(() => new THREE.BufferAttribute(randArr, 1), [randArr]);
-  const tAttr = useMemo(() => new THREE.BufferAttribute(tArr, 1), [tArr]);
-
   return (
     <points ref={meshRef}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" {...posAttr} />
-        <bufferAttribute attach="attributes-aFrom" {...fromAttr} />
-        <bufferAttribute attach="attributes-aTo" {...toAttr} />
-        <bufferAttribute attach="attributes-aRand" {...randAttr} />
-        <bufferAttribute attach="attributes-aT" {...tAttr} />
-      </bufferGeometry>
+      <bufferGeometry ref={geoRef} />
       <shaderMaterial
         ref={materialRef}
         vertexShader={vertexShader}
