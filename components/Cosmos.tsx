@@ -9,7 +9,7 @@ import MemoryStars from "./MemoryStars";
 import { useAetherStore, Star } from "../lib/store";
 import { N } from "../lib/forms";
 
-// Silently drops bloom if GPU can't handle it — galaxy still renders at full quality otherwise
+// Safety net for desktop: if bloom fails, galaxy still renders
 class PostProcessingBoundary extends Component<
   { children: ReactNode },
   { failed: boolean }
@@ -23,11 +23,9 @@ class PostProcessingBoundary extends Component<
   }
 }
 
-// Detect mobile: small screen + touch input
 function getDeviceProfile() {
   if (typeof window === "undefined") return { isMobile: false };
-  const isMobile =
-    window.innerWidth <= 768 && navigator.maxTouchPoints > 0;
+  const isMobile = window.innerWidth <= 768 && navigator.maxTouchPoints > 0;
   return { isMobile };
 }
 
@@ -39,9 +37,9 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
   const { form, palette, energy, stars } = useAetherStore();
   const { isMobile } = getDeviceProfile();
 
-  // Mobile: 60k particles, no mipmapBlur. Desktop: full 200k + mipmapBlur.
+  // Mobile: 60k particles, no EffectComposer (avoids RGBA16F render target crash)
+  // Desktop: full 200k particles + bloom + mipmapBlur
   const particleCount = isMobile ? 60_000 : N;
-  const useMipmapBlur = !isMobile;
 
   return (
     <Canvas
@@ -62,16 +60,18 @@ export default function Cosmos({ onStarClick }: CosmosProps) {
         />
         <MemoryStars stars={stars} onClickStar={onStarClick} />
 
-        <PostProcessingBoundary>
-          <EffectComposer>
-            <Bloom
-              intensity={1.5}
-              luminanceThreshold={0.1}
-              luminanceSmoothing={0.9}
-              mipmapBlur={useMipmapBlur}
-            />
-          </EffectComposer>
-        </PostProcessingBoundary>
+        {!isMobile && (
+          <PostProcessingBoundary>
+            <EffectComposer>
+              <Bloom
+                intensity={1.5}
+                luminanceThreshold={0.1}
+                luminanceSmoothing={0.9}
+                mipmapBlur
+              />
+            </EffectComposer>
+          </PostProcessingBoundary>
+        )}
 
         <OrbitControls
           enableDamping
