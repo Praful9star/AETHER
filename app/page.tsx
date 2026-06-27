@@ -1,16 +1,16 @@
 "use client";
 
-import { useRef, useEffect, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useAetherStore, Star } from "../lib/store";
 import Overlay from "../components/Overlay";
 import Constellation from "../components/Constellation";
 import CaptureModal from "../components/CaptureModal";
+import ErrorBoundary from "../components/ErrorBoundary";
 
 const Cosmos = dynamic(() => import("../components/Cosmos"), { ssr: false });
 
 export default function Home() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const { setCosmosState, setStars } = useAetherStore();
 
   useEffect(() => {
@@ -38,12 +38,14 @@ export default function Home() {
       style={{ touchAction: "none" }}
     >
       <div className="absolute inset-0">
-        <Cosmos ref={canvasRef} onStarClick={handleStarClick} />
+        <ErrorBoundary>
+          <Cosmos onStarClick={handleStarClick} />
+        </ErrorBoundary>
       </div>
 
       <Overlay />
       <Constellation onSelectStar={handleStarClick} />
-      <CaptureModal canvasRef={canvasRef} />
+      <CaptureModal />
 
       <a
         href="/void"
@@ -59,7 +61,10 @@ function getOrCreateUserId(): string {
   if (typeof window === "undefined") return "anon";
   let id = localStorage.getItem("aether_user_id");
   if (!id) {
-    id = crypto.randomUUID();
+    id =
+      typeof crypto?.randomUUID === "function"
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36);
     localStorage.setItem("aether_user_id", id);
   }
   return id;

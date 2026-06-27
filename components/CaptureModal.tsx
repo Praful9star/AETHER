@@ -4,16 +4,12 @@ import { useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAetherStore } from "../lib/store";
 
-interface CaptureModalProps {
-  canvasRef: React.RefObject<HTMLCanvasElement>;
-}
-
-export default function CaptureModal({ canvasRef }: CaptureModalProps) {
+export default function CaptureModal() {
   const { captureModalOpen, setCaptureModalOpen, whisper, thought, form } =
     useAetherStore();
 
   const handleCapture = useCallback(() => {
-    const canvas = canvasRef.current;
+    const canvas = document.querySelector<HTMLCanvasElement>("canvas");
     if (!canvas) return;
 
     const out = document.createElement("canvas");
@@ -26,8 +22,12 @@ export default function CaptureModal({ canvasRef }: CaptureModalProps) {
     ctx.fillRect(0, 0, 1080, 1920);
 
     const aspect = canvas.width / canvas.height;
-    let dw = 1080, dh = 1080 / aspect;
-    if (dh > 1600) { dh = 1600; dw = dh * aspect; }
+    let dw = 1080,
+      dh = 1080 / aspect;
+    if (dh > 1600) {
+      dh = 1600;
+      dw = dh * aspect;
+    }
     const dx = (1080 - dw) / 2;
     const dy = (1920 - dh) / 2;
     ctx.drawImage(canvas, dx, dy, dw, dh);
@@ -60,7 +60,11 @@ export default function CaptureModal({ canvasRef }: CaptureModalProps) {
       const lineH = 50;
       const startY = 1920 - 200 - lines.length * lineH;
       lines.forEach((l, i) => {
-        ctx.fillText(i === 0 ? `"${l}` : i === lines.length - 1 ? `${l}"` : l, 540, startY + i * lineH);
+        ctx.fillText(
+          i === 0 ? `"${l}` : i === lines.length - 1 ? `${l}"` : l,
+          540,
+          startY + i * lineH
+        );
       });
     }
 
@@ -72,7 +76,7 @@ export default function CaptureModal({ canvasRef }: CaptureModalProps) {
     link.download = `aether-${Date.now()}.png`;
     link.href = out.toDataURL("image/png");
     link.click();
-  }, [canvasRef, whisper, thought, form]);
+  }, [whisper, thought, form]);
 
   return (
     <>
