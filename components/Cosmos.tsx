@@ -17,7 +17,10 @@ interface CosmosProps {
 
 function detectMobile() {
   if (typeof window === "undefined") return false;
-  return window.innerWidth <= 1024 && navigator.maxTouchPoints > 0;
+  // UA check catches Android tablets in landscape (innerWidth can be 1280+)
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return true;
+  // Fallback: any touch device that isn't a wide desktop touchscreen
+  return navigator.maxTouchPoints > 0 && window.innerWidth <= 1366;
 }
 
 export default function Cosmos({ onStarClick }: CosmosProps) {
