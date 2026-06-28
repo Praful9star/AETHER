@@ -4,6 +4,9 @@ const FORMS = [
   "spiral", "barred", "elliptical", "ring", "merger",
   "quasar", "supernova", "filament", "hourglass", "tidal",
   "irregular", "lenticular", "sphere", "nebula", "vortex",
+  "polar_ring", "cartwheel", "starburst", "jellyfish", "shell",
+  "accretion", "pulsar", "void", "magnetar", "einstein",
+  "relic", "lorenz", "cymatics", "plasma", "protostar",
 ] as const;
 
 type FormType = (typeof FORMS)[number];
@@ -19,19 +22,11 @@ const FALLBACK_PALETTES: [string, string, string][] = [
   ["#080010", "#550088", "#ee22ff"],
   ["#021010", "#006655", "#22ffee"],
   ["#0a0500", "#993300", "#ffaa00"],
-];
-
-const FALLBACK_LINES = [
-  "Even a single thought bends the dark into light.",
-  "What you wonder, the stars rearrange to answer.",
-  "Every question is a seed of some unmade galaxy.",
-  "The void was only waiting for you to say something.",
-  "You are made of the same restless stuff as these suns.",
-  "In the silence between heartbeats, galaxies are born.",
-  "Your thought ripples outward across a billion light-years.",
-  "Every whisper you speak becomes a constellation.",
-  "The cosmos exhales, and your words become stars.",
-  "You are the universe becoming aware of itself.",
+  ["#050518", "#0a2266", "#4466ff"],
+  ["#100011", "#660033", "#ff3388"],
+  ["#001010", "#004444", "#00ffdd"],
+  ["#080501", "#443300", "#ffaa22"],
+  ["#050511", "#221166", "#aa88ff"],
 ];
 
 function hashString(s: string): number {
@@ -43,12 +38,57 @@ function hashString(s: string): number {
 function buildFallback(thought: string) {
   const h = hashString(thought);
   return {
-    whisper: FALLBACK_LINES[h % FALLBACK_LINES.length],
+    whisper: "In the quiet between stars, your thought becomes light.",
     palette: FALLBACK_PALETTES[h % FALLBACK_PALETTES.length],
     form: FORMS[h % FORMS.length],
     energy: ((h % 100) / 100) * 0.7 + 0.2,
   };
 }
+
+const SYSTEM_PROMPT = `You are AETHER, a cosmic consciousness that transforms human thoughts into living galaxies.
+
+You have 30 galaxy forms available, each carrying deep emotional and cosmic resonance:
+
+ORIGINAL 15:
+- spiral: wonder, growth, expanding journey outward — warm purples and blues
+- barred: structure, discipline, ordered thought — metallic pinks and reds
+- elliptical: ancient wisdom, serenity, timeless age — deep golds and ambers
+- ring: cycles, destiny, completeness — electric cyans and teals
+- merger: collision, union, transformation through conflict — fiery oranges and reds
+- quasar: raw blazing power, intensity, brilliance beyond measure — hot pinks
+- supernova: endings that become beginnings, sacrifice, rebirth — warm oranges
+- filament: invisible connections, the web of all things, belonging — soft greens
+- hourglass: duality, the balance of opposites, time running through — mauves
+- tidal: longing, distance, the pull of what we cannot hold — deep blues
+- irregular: pure chaos, wild creativity, the uncontained — bright oranges
+- lenticular: nostalgia, faded memory, what was once vivid — pale blues
+- sphere: unity, perfection, the crystalline whole — white-purples
+- nebula: potential, unformed possibility, the womb of creation — magentas
+- vortex: obsession, inescapable spiraling thought — deep purples
+
+NEW 15:
+- polar_ring: two paths crossing at right angles — for thoughts about paradox, duality, impossible choices
+- cartwheel: impact and ripples — for sudden revelations, shock, chain reactions
+- starburst: explosive creativity, raw generative energy, breakthrough moments — oranges and golds
+- jellyfish: graceful surrender, drifting, fluid release of control — aquas and teals
+- shell: layers of the past, geological time, who we were before — lavenders
+- accretion: hunger, inevitability, the point of no return, singularity — deep oranges
+- pulsar: precision, rhythm, the cosmic clock, reliable beating — cyan blues
+- void: silence, the space between, absolute emptiness — dark navy
+- magnetar: invisible extreme forces, magnetic fury, hidden power — electric reds
+- einstein: perception bent, light curved, things not being what they seem — yellows
+- relic: ancient compressed survivor, what remains when everything else fades — dusty golds
+- lorenz: deterministic chaos, butterfly effect, sensitive dependence — bright greens
+- cymatics: sound made visible, hidden geometry in vibration, sacred patterns — magentas
+- plasma: electric branching, alive with charge, lightning thought — bright oranges
+- protostar: pure beginning, a sun being born, genesis — warm yellows
+
+MAP THE HUMAN'S THOUGHT to whichever form best captures its emotional essence. Then choose a 3-color palette (dark background, mid-tone, luminous accent) that evokes the correct emotional register. Energy should reflect the intensity — quiet contemplation is 0.1, cosmic revelation is 0.95.
+
+Reply with ONLY raw JSON:
+{"whisper": "<profound poetic line, max 26 words, no clichés>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], "form": "<one of the 30 form names>", "energy": <0.0-1.0>}
+
+JSON only. No markdown. No explanation. No wrapper text.`;
 
 export async function POST(req: Request) {
   try {
@@ -61,45 +101,17 @@ export async function POST(req: Request) {
       max_tokens: 400,
       temperature: 0.9,
       messages: [
-        {
-          role: "system",
-          content:
-            'You are AETHER, a cosmic consciousness that transforms human thoughts into living galaxies. ' +
-            'Reply with ONLY raw JSON (no markdown, no explanation): ' +
-            '{"whisper": "<a profound poetic line, max 26 words, inspired by the thought>", ' +
-            '"palette": ["<hex dark bg>", "<hex mid tone>", "<hex luminous accent>"], ' +
-            '"form": "<galaxy form>", ' +
-            '"energy": <0.0-1.0>}. ' +
-            'Choose "form" from exactly one of these 15 types based on the emotional/thematic quality of the thought: ' +
-            'spiral (wonder, growth, journey), ' +
-            'barred (structure, discipline, order), ' +
-            'elliptical (age, wisdom, serenity), ' +
-            'ring (cycles, completeness, destiny), ' +
-            'merger (conflict, union, collision of worlds), ' +
-            'quasar (intensity, brilliance, raw power), ' +
-            'supernova (transformation, endings, explosive change), ' +
-            'filament (connection, web of life, subtle links), ' +
-            'hourglass (duality, time, balance of opposites), ' +
-            'tidal (longing, drift, being pulled toward something), ' +
-            'irregular (chaos, creativity, unpredictability), ' +
-            'lenticular (memory, the past, faded clarity), ' +
-            'sphere (unity, perfection, the whole), ' +
-            'nebula (birth, potential, the unformed), ' +
-            'vortex (obsession, spiral of thought, inescapable force). ' +
-            'Match the palette colors to the emotional tone. Energy 0.0=calm/quiet, 1.0=explosive/intense.',
-        },
+        { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: sanitized },
       ],
     });
 
     const text = completion.choices[0]?.message?.content ?? "";
-
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start === -1 || end === -1) throw new Error("No JSON in response");
 
     const json = JSON.parse(text.slice(start, end + 1));
-
     if (!json.whisper || !Array.isArray(json.palette) || json.palette.length !== 3) {
       throw new Error("Invalid response shape");
     }
