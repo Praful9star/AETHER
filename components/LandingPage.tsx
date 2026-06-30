@@ -452,7 +452,7 @@ const PLANS = [
     cycle: "per month",
     color: "#ff88aa",
     featured: true,
-    items: ["Unlimited whispers", "120 saved stars", "All 15 galaxy forms", "Full spatial audio", "4K capture", "Priority AI", "Custom palettes"],
+    items: ["Unlimited whispers", "120 saved stars", "All 30 galaxy forms", "Full spatial audio", "4K capture", "Priority AI", "Custom palettes"],
     cta: "Go Cosmic →",
   },
   {
@@ -571,7 +571,7 @@ export default function LandingPage() {
         <div style={{ display: "flex", animation: "aether-ticker-l 44s linear infinite", whiteSpace: "nowrap" }}>
           {[0, 1].map(k => (
             <span key={k} style={{ display: "inline-flex", alignItems: "center" }}>
-              {["40,000 PARTICLES", "15 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
+              {["40,000 PARTICLES", "30 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
                 <span key={item} style={{ color: "rgba(200,196,235,0.3)", fontSize: 9.5, letterSpacing: "0.38em", paddingRight: "3.5em", display: "inline-block" }}>
                   {item} <span style={{ color: "#b892ff55" }}>·</span>
                 </span>
@@ -621,7 +621,7 @@ export default function LandingPage() {
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 0 }}>
             {([
               { n: "40K",  label: "PARTICLES PER COSMOS", sub: "Rendered in real time at 60fps", color: "#b892ff", id: "stat-0" },
-              { n: "15",   label: "LIVING GALAXY FORMS",  sub: "Each with unique geometry and sound", color: "#ff88aa", id: "stat-1" },
+              { n: "30",   label: "LIVING GALAXY FORMS",  sub: "Each with unique geometry and sound", color: "#ff88aa", id: "stat-1" },
               { n: "∞",    label: "UNIQUE UNIVERSES",      sub: "No two thoughts produce the same sky", color: "#44ddff", id: "stat-2" },
             ] as const).map(({ n, label, sub, color, id }, i) => (
               <div key={id} id={id} data-reveal style={{
@@ -665,7 +665,7 @@ export default function LandingPage() {
             Canvas: () => <ConstellationNet color="#b892ff" />,
           },
           {
-            n: "02", title: "15 Living Galaxy Forms", color: "#ff88aa",
+            n: "02", title: "30 Living Galaxy Forms", color: "#ff88aa",
             body: "Forty thousand particles reshape in real time between fifteen distinct cosmic structures — each carrying its own geometry, color palette, and meaning.",
             Canvas: () => <OrbitRings />,
           },
@@ -711,7 +711,7 @@ export default function LandingPage() {
           GALAXY FORMS
         </div>
         <h2 id="forms-h2" data-reveal style={{ ...reveal("forms-h2", 0.08), color: "#f0ecff", fontSize: "clamp(24px, 4vw, 48px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", textAlign: "center", marginBottom: 52 }}>
-          15 Living Galaxy Forms
+          30 Living Galaxy Forms
         </h2>
 
         {/* Row 1 — left */}
