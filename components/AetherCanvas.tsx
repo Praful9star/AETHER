@@ -1055,11 +1055,11 @@ export default function AetherCanvas() {
     const nebulaGroup=new THREE.Group();
     const nebulaMats: THREE.SpriteMaterial[]=[];
     for (let i=0;i<NEBULAE;i++) {
-      const nm=new THREE.SpriteMaterial({map:sprite,color:0x2d1b69,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,opacity:0.05+Math.random()*0.05});
+      const nm=new THREE.SpriteMaterial({map:sprite,color:0x2d1b69,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,opacity:0.018+Math.random()*0.022});
       const ns=new THREE.Sprite(nm);
-      const a=Math.random()*Math.PI*2, r=28+Math.random()*46;
+      const a=Math.random()*Math.PI*2, r=34+Math.random()*46;
       ns.position.set(Math.cos(a)*r,(Math.random()-0.5)*36,Math.sin(a)*r);
-      const sc=42+Math.random()*55;
+      const sc=34+Math.random()*40;
       ns.scale.set(sc,sc*(0.6+Math.random()*0.5),1);
       nebulaGroup.add(ns); nebulaMats.push(nm);
     }
@@ -1558,7 +1558,9 @@ export default function AetherCanvas() {
             transition={{duration:0.38}}
             style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",zIndex:3,padding:"0 24px"}}
           >
-            <div style={{color:accentColor,fontSize:"clamp(18px, 5vw, 60px)",letterSpacing:"0.46em",fontWeight:200,textShadow:`0 0 50px ${abb}, 0 0 110px ${a44}`,fontFamily:"'Helvetica Neue', Arial, sans-serif",textAlign:"center"}}>
+            {/* Dark scrim so the label reads over any galaxy brightness */}
+            <div style={{position:"absolute",inset:0,background:"radial-gradient(ellipse 70% 30% at 50% 50%, rgba(3,2,8,0.72) 0%, rgba(3,2,8,0.35) 55%, transparent 100%)"}} />
+            <div style={{position:"relative",color:"#ffffff",fontSize:"clamp(18px, 5vw, 60px)",letterSpacing:"0.46em",fontWeight:200,textShadow:`0 0 24px ${accentColor}, 0 0 70px ${abb}, 0 0 130px ${a66}, 0 2px 6px rgba(0,0,0,0.9)`,fontFamily:"'Helvetica Neue', Arial, sans-serif",textAlign:"center"}}>
               {morphLabel.label}
             </div>
           </motion.div>
