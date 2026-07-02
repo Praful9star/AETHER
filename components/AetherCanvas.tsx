@@ -2,6 +2,9 @@
 
 import { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -923,6 +926,17 @@ export default function AetherCanvas() {
     scene.fog=new THREE.FogExp2(0x050308,0.003);
     const camera=new THREE.PerspectiveCamera(60,mount.clientWidth/mount.clientHeight,0.1,600);
 
+    // Cinematic bloom post-processing
+    const composer=new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene,camera));
+    const bloom=new UnrealBloomPass(
+      new THREE.Vector2(mount.clientWidth,mount.clientHeight),
+      0.85,  // strength
+      0.65,  // radius
+      0.0,   // threshold — everything glows softly
+    );
+    composer.addPass(bloom);
+
     const cv=document.createElement("canvas"); cv.width=cv.height=128;
     const c2=cv.getContext("2d")!;
     const g=c2.createRadialGradient(64,64,0,64,64,64);
@@ -953,7 +967,49 @@ export default function AetherCanvas() {
     const live=new Float32Array(N*3); live.set(forms.spiral);
     geo.setAttribute("position",new THREE.BufferAttribute(live,3));
     geo.setAttribute("color",new THREE.BufferAttribute(colCur,3));
-    const mat=new THREE.PointsMaterial({size:0.95,map:sprite,vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true,opacity:0.95});
+    // Per-particle star character: size class + twinkle phase
+    const aSize=new Float32Array(N), aPhase2=new Float32Array(N);
+    for (let i=0;i<N;i++) {
+      const roll=Math.random();
+      aSize[i]=roll<0.86?0.6+Math.random()*0.6:roll<0.97?1.3+Math.random()*0.9:2.4+Math.random()*1.6;
+      aPhase2[i]=Math.random()*Math.PI*2;
+    }
+    geo.setAttribute("aSize",new THREE.BufferAttribute(aSize,1));
+    geo.setAttribute("aPhase",new THREE.BufferAttribute(aPhase2,1));
+    const matUniforms={
+      uTime:{value:0},
+      uSize:{value:0.95},
+      uMap:{value:sprite},
+    };
+    const mat=new THREE.ShaderMaterial({
+      uniforms:matUniforms,
+      vertexColors:true,
+      transparent:true,
+      depthWrite:false,
+      blending:THREE.AdditiveBlending,
+      vertexShader:`
+        attribute float aSize;
+        attribute float aPhase;
+        uniform float uTime;
+        uniform float uSize;
+        varying vec3 vColor;
+        varying float vTwinkle;
+        void main(){
+          vColor=color;
+          vTwinkle=0.72+0.28*sin(uTime*(1.2+aPhase*0.35)+aPhase*7.0);
+          vec4 mv=modelViewMatrix*vec4(position,1.0);
+          gl_PointSize=uSize*aSize*vTwinkle*(340.0/-mv.z);
+          gl_Position=projectionMatrix*mv;
+        }`,
+      fragmentShader:`
+        uniform sampler2D uMap;
+        varying vec3 vColor;
+        varying float vTwinkle;
+        void main(){
+          vec4 tex=texture2D(uMap,gl_PointCoord);
+          gl_FragColor=vec4(vColor*(0.8+0.45*vTwinkle),tex.a*0.95);
+        }`,
+    });
     const points=new THREE.Points(geo,mat);
     scene.add(points);
 
@@ -970,6 +1026,26 @@ export default function AetherCanvas() {
     sGeo.setAttribute("position",new THREE.BufferAttribute(sPos,3));
     const bgStars=new THREE.Points(sGeo,new THREE.PointsMaterial({size:0.65,color:0x8899cc,map:sprite,transparent:true,opacity:0.55,depthWrite:false,blending:THREE.AdditiveBlending}));
     scene.add(bgStars);
+
+    // Shooting stars — comet streaks that occasionally cross the sky
+    const METEORS=5;
+    const meteorGeo=new THREE.BufferGeometry();
+    const meteorPos=new Float32Array(METEORS*2*3).fill(1e5);
+    meteorGeo.setAttribute("position",new THREE.BufferAttribute(meteorPos,3));
+    const meteorMat=new THREE.LineBasicMaterial({color:0xcfd8ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false});
+    const meteors=new THREE.LineSegments(meteorGeo,meteorMat);
+    scene.add(meteors);
+    const meteorState=Array.from({length:METEORS},()=>({active:false,life:0,x:0,y:0,z:0,vx:0,vy:0,vz:0}));
+    let nextMeteor=performance.now()+4000+Math.random()*6000;
+    const spawnMeteor=()=>{
+      const m=meteorState.find(s=>!s.active); if (!m) return;
+      const a=Math.random()*Math.PI*2, r=90+Math.random()*40;
+      m.x=Math.cos(a)*r; m.y=30+Math.random()*40; m.z=Math.sin(a)*r;
+      const sp=55+Math.random()*45;
+      const ta=a+Math.PI+(Math.random()-0.5)*0.9;
+      m.vx=Math.cos(ta)*sp; m.vy=-(14+Math.random()*22); m.vz=Math.sin(ta)*sp;
+      m.life=1; m.active=true;
+    };
 
     const memPos=new Float32Array(CAP*3).fill(1e5);
     const memCol=new Float32Array(CAP*3).fill(1);
@@ -1084,8 +1160,9 @@ export default function AetherCanvas() {
       },
       snapshot(whisperText:string) {
         const W=mount.clientWidth,H=mount.clientHeight;
-        renderer.setSize(1080,1920); camera.aspect=1080/1920; camera.updateProjectionMatrix();
-        renderer.render(scene,camera);
+        renderer.setSize(1080,1920); composer.setSize(1080,1920);
+        camera.aspect=1080/1920; camera.updateProjectionMatrix();
+        composer.render();
         const out=document.createElement("canvas"); out.width=1080; out.height=1920;
         const o=out.getContext("2d")!;
         o.fillStyle="#050308"; o.fillRect(0,0,1080,1920);
@@ -1112,8 +1189,9 @@ export default function AetherCanvas() {
         o.fillStyle="rgba(200,196,235,.45)"; o.font="300 18px 'Helvetica Neue', Arial, sans-serif";
         o.fillText("A LIVING COSMOS",540,1812);
         const url=out.toDataURL("image/png");
-        renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix();
-        renderer.render(scene,camera);
+        renderer.setSize(W,H); composer.setSize(W,H);
+        camera.aspect=W/H; camera.updateProjectionMatrix();
+        composer.render();
         return url;
       },
     };
@@ -1122,6 +1200,7 @@ export default function AetherCanvas() {
       if (!mountRef.current) return;
       const w=mountRef.current.clientWidth,h=mountRef.current.clientHeight;
       camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h);
+      composer.setSize(w,h);
     };
     window.addEventListener("resize",onResize);
 
@@ -1203,9 +1282,28 @@ export default function AetherCanvas() {
       coreMat.opacity=0.5+displayEnergy*0.45;
       (memMat as any).size=3.2+Math.sin(t*1.3)*0.5;
       memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
-      mat.size=0.9+displayEnergy*0.6;
+      matUniforms.uTime.value=t;
+      matUniforms.uSize.value=0.9+displayEnergy*0.6;
+      bloom.strength=0.7+displayEnergy*0.9;
 
-      renderer.render(scene,camera);
+      // Shooting stars
+      if (now>nextMeteor) { spawnMeteor(); nextMeteor=now+5000+Math.random()*11000; }
+      let anyMeteor=false;
+      meteorState.forEach((m,i)=>{
+        const j=i*6;
+        if (!m.active) { meteorPos[j]=1e5; meteorPos[j+3]=1e5; return; }
+        anyMeteor=true;
+        m.x+=m.vx*dt; m.y+=m.vy*dt; m.z+=m.vz*dt;
+        m.life-=dt*0.55;
+        if (m.life<=0) { m.active=false; meteorPos[j]=1e5; meteorPos[j+3]=1e5; return; }
+        const trail=0.09;
+        meteorPos[j]  =m.x; meteorPos[j+1]=m.y; meteorPos[j+2]=m.z;
+        meteorPos[j+3]=m.x-m.vx*trail; meteorPos[j+4]=m.y-m.vy*trail; meteorPos[j+5]=m.z-m.vz*trail;
+      });
+      meteorMat.opacity=anyMeteor?0.75:0;
+      meteorGeo.attributes.position.needsUpdate=true;
+
+      composer.render();
     };
     loop();
 
@@ -1230,7 +1328,9 @@ export default function AetherCanvas() {
       el.removeEventListener("touchmove",onTM);
       geo.dispose(); mat.dispose(); sGeo.dispose(); sprite.dispose();
       (bgStars.material as THREE.Material).dispose();
-      memGeo.dispose(); memMat.dispose(); coreMat.dispose(); renderer.dispose();
+      memGeo.dispose(); memMat.dispose(); coreMat.dispose();
+      meteorGeo.dispose(); meteorMat.dispose();
+      composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
     };
