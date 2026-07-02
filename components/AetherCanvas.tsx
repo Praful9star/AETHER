@@ -908,6 +908,9 @@ export default function AetherCanvas() {
   const [screensaver,  setScreensaver]  = useState(false);
   const [voiceActive,  setVoiceActive]  = useState(false);
   const [hasVoice,     setHasVoice]     = useState(false);
+  const [streak,       setStreak]       = useState(0);
+  const [shareId,      setShareId]      = useState<string|null>(null);
+  const [copied,       setCopied]       = useState(false);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -931,9 +934,9 @@ export default function AetherCanvas() {
     composer.addPass(new RenderPass(scene,camera));
     const bloom=new UnrealBloomPass(
       new THREE.Vector2(mount.clientWidth,mount.clientHeight),
-      0.85,  // strength
-      0.65,  // radius
-      0.0,   // threshold — everything glows softly
+      0.45,  // strength — subtle halo, not blowout
+      0.5,   // radius
+      0.32,  // threshold — only bright cores bloom
     );
     composer.addPass(bloom);
 
@@ -1007,7 +1010,7 @@ export default function AetherCanvas() {
         varying float vTwinkle;
         void main(){
           vec4 tex=texture2D(uMap,gl_PointCoord);
-          gl_FragColor=vec4(vColor*(0.8+0.45*vTwinkle),tex.a*0.95);
+          gl_FragColor=vec4(vColor*(0.66+0.34*vTwinkle),tex.a*0.92);
         }`,
     });
     const points=new THREE.Points(geo,mat);
@@ -1045,6 +1048,24 @@ export default function AetherCanvas() {
       const ta=a+Math.PI+(Math.random()-0.5)*0.9;
       m.vx=Math.cos(ta)*sp; m.vy=-(14+Math.random()*22); m.vz=Math.sin(ta)*sp;
       m.life=1; m.active=true;
+    };
+
+    // Nebula clouds — huge soft palette-tinted gas sprites drifting behind the galaxy
+    const NEBULAE=9;
+    const nebulaGroup=new THREE.Group();
+    const nebulaMats: THREE.SpriteMaterial[]=[];
+    for (let i=0;i<NEBULAE;i++) {
+      const nm=new THREE.SpriteMaterial({map:sprite,color:0x2d1b69,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,opacity:0.05+Math.random()*0.05});
+      const ns=new THREE.Sprite(nm);
+      const a=Math.random()*Math.PI*2, r=28+Math.random()*46;
+      ns.position.set(Math.cos(a)*r,(Math.random()-0.5)*36,Math.sin(a)*r);
+      const sc=42+Math.random()*55;
+      ns.scale.set(sc,sc*(0.6+Math.random()*0.5),1);
+      nebulaGroup.add(ns); nebulaMats.push(nm);
+    }
+    scene.add(nebulaGroup);
+    const tintNebulae=(pal:string[])=>{
+      nebulaMats.forEach((nm,i)=>nm.color.set(pal[i%2===0?1:2]));
     };
 
     const memPos=new Float32Array(CAP*3).fill(1e5);
@@ -1143,6 +1164,7 @@ export default function AetherCanvas() {
         const f=FORMS.includes(fname as FormType)?(fname as FormType):"spiral";
         currentTarget=forms[f]; applyPalette(pal,colTgt); colorFrames=100;
         energyTgt=Math.max(0,Math.min(1,energy)); burst=Math.min(1,energy+0.35); coreMat.color.set(pal[2]);
+        tintNebulae(pal);
       },
       rebuildStars(arr:SavedStar[]) {
         const n=Math.min(arr.length,CAP);
@@ -1234,6 +1256,7 @@ export default function AetherCanvas() {
       points.rotation.y=spin;
       bgStars.rotation.y=spin*0.06;
       memPoints.rotation.y=spin*0.12;
+      nebulaGroup.rotation.y=-spin*0.045;
 
       const amp=displayEnergy*8;
       for (let i=0;i<N;i++) {
@@ -1284,7 +1307,7 @@ export default function AetherCanvas() {
       memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
       matUniforms.uTime.value=t;
       matUniforms.uSize.value=0.9+displayEnergy*0.6;
-      bloom.strength=0.7+displayEnergy*0.9;
+      bloom.strength=0.35+displayEnergy*0.45;
 
       // Shooting stars
       if (now>nextMeteor) { spawnMeteor(); nextMeteor=now+5000+Math.random()*11000; }
@@ -1330,6 +1353,7 @@ export default function AetherCanvas() {
       (bgStars.material as THREE.Material).dispose();
       memGeo.dispose(); memMat.dispose(); coreMat.dispose();
       meteorGeo.dispose(); meteorMat.dispose();
+      nebulaMats.forEach(nm=>nm.dispose());
       composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
@@ -1344,12 +1368,59 @@ export default function AetherCanvas() {
     setTimeout(()=>setMorphLabel(m=>(m?.id===id?null:m)),2400);
   },[]);
 
+  const bumpStreak=useCallback(()=>{
+    try {
+      const today=new Date().toISOString().slice(0,10);
+      const raw=localStorage.getItem("aether_streak");
+      const st=raw?JSON.parse(raw):{last:"",n:0};
+      if (st.last===today) { setStreak(st.n); return; }
+      const y=new Date(Date.now()-864e5).toISOString().slice(0,10);
+      const n=st.last===y?st.n+1:1;
+      localStorage.setItem("aether_streak",JSON.stringify({last:today,n}));
+      setStreak(n);
+    } catch {}
+  },[]);
+
   const remember=useCallback((s:SavedStar)=>{
     starsRef.current=[...starsRef.current,s].slice(-CAP);
     sceneRef.current.rebuildStars?.(starsRef.current);
     setList([...starsRef.current].reverse());
     setCount(starsRef.current.length);
-    fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)}).catch(()=>{});
+    try { localStorage.setItem("aether_stars",JSON.stringify(starsRef.current)); } catch {}
+    bumpStreak();
+    fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)})
+      .then(r=>r.json())
+      .then(d=>{ if (d?.ok&&d.id) setShareId(d.id); })
+      .catch(()=>{});
+  },[bumpStreak]);
+
+  // Restore constellation + streak from previous visits
+  useEffect(()=>{
+    try {
+      const raw=localStorage.getItem("aether_stars");
+      if (raw) {
+        const arr=JSON.parse(raw) as SavedStar[];
+        if (Array.isArray(arr)&&arr.length) {
+          starsRef.current=arr.slice(-CAP);
+          setList([...starsRef.current].reverse());
+          setCount(starsRef.current.length);
+          // Scene may still be booting on first tick
+          const t=setTimeout(()=>sceneRef.current.rebuildStars?.(starsRef.current),400);
+          return ()=>clearTimeout(t);
+        }
+      }
+    } catch {}
+  },[]);
+  useEffect(()=>{
+    try {
+      const raw=localStorage.getItem("aether_streak");
+      if (raw) {
+        const st=JSON.parse(raw);
+        const today=new Date().toISOString().slice(0,10);
+        const y=new Date(Date.now()-864e5).toISOString().slice(0,10);
+        if (st.last===today||st.last===y) setStreak(st.n);
+      }
+    } catch {}
   },[]);
 
   const applyResult=useCallback((pal:string[],fm:FormType,en:number,text:string,save?:string)=>{
@@ -1400,7 +1471,29 @@ export default function AetherCanvas() {
   useEffect(()=>{sceneRef.current.onStarTap=(i:number)=>{const s=starsRef.current[i];if(s)revisit(s);};});
 
   const capture=()=>{ try{setCaptureURL(sceneRef.current.snapshot?.(whisper)??null);}catch{} };
-  const clearStars=()=>{ starsRef.current=[];sceneRef.current.rebuildStars?.([]);setList([]);setCount(0); };
+  const clearStars=()=>{ starsRef.current=[];sceneRef.current.rebuildStars?.([]);setList([]);setCount(0); try{localStorage.removeItem("aether_stars");}catch{} };
+
+  const shareWhisper=useCallback(async()=>{
+    const link=shareId?`${window.location.origin}/w/${shareId}`:window.location.origin;
+    // Native share sheet with the image when supported (mobile)
+    if (captureURL&&navigator.share) {
+      try {
+        const blob=await (await fetch(captureURL)).blob();
+        const file=new File([blob],"aether-whisper.png",{type:"image/png"});
+        if (navigator.canShare?.({files:[file]})) {
+          await navigator.share({title:"AETHER",text:`"${whisper}" — my galaxy on Aether`,url:link,files:[file]});
+          return;
+        }
+        await navigator.share({title:"AETHER",text:`"${whisper}"`,url:link});
+        return;
+      } catch {}
+    }
+    // Desktop fallback: copy link
+    try {
+      await navigator.clipboard.writeText(`"${whisper}" — ${link}`);
+      setCopied(true); setTimeout(()=>setCopied(false),2200);
+    } catch {}
+  },[shareId,captureURL,whisper]);
 
   const toggleVoice=useCallback(()=>{
     if (!hasVoice) return;
@@ -1480,6 +1573,11 @@ export default function AetherCanvas() {
         <div style={{color:"rgba(200,196,235,.38)",fontSize:9,letterSpacing:"0.32em",marginTop:5}}>
           A LIVING COSMOS
         </div>
+        {streak>0&&(
+          <div style={{color:accentColor,fontSize:8.5,letterSpacing:"0.26em",marginTop:7,opacity:0.75,textShadow:`0 0 12px ${a66}`}}>
+            ✦ DAY {streak} IN YOUR COSMOS
+          </div>
+        )}
       </div>
 
       {/* Controls — top right */}
@@ -1613,7 +1711,11 @@ export default function AetherCanvas() {
             <div style={{color:"rgba(220,216,255,.6)",fontSize:12,letterSpacing:"0.1em",marginTop:16,textAlign:"center"}}>
               Long-press to save · ready for stories & reels
             </div>
-            <div style={{display:"flex",gap:12,marginTop:16}}>
+            <div style={{display:"flex",gap:12,marginTop:16,flexWrap:"wrap",justifyContent:"center"}}>
+              <button onClick={shareWhisper}
+                style={{background:`linear-gradient(135deg,${a66},${a44})`,border:`1px solid ${a88}`,color:"#fff",borderRadius:999,padding:"11px 26px",fontSize:12,letterSpacing:"0.16em",cursor:"pointer",fontFamily:"inherit",boxShadow:`0 0 24px ${a44}`}}>
+                {copied?"LINK COPIED ✦":"SHARE ✦"}
+              </button>
               <a href={captureURL} download="aether-whisper.png"
                 style={{background:a44,border:`1px solid ${a66}`,color:"#e9e4ff",borderRadius:999,padding:"11px 24px",fontSize:12,letterSpacing:"0.16em",textDecoration:"none"}}>
                 DOWNLOAD
