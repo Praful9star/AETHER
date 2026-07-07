@@ -6,6 +6,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -88,6 +89,43 @@ const FALLBACK_LINES = [
   "The cosmos exhales, and your words become stars.",
   "You are the universe becoming aware of itself.",
 ];
+
+// ─── Cinematic lens shader — gravitational warp, chromatic aberration, grain ──
+
+const CinematicShader = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture|null },
+    uTime:    { value: 0 },
+    uWarp:    { value: 0 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform float uWarp;
+    varying vec2 vUv;
+    void main(){
+      vec2 c=vUv-0.5;
+      float r=length(c);
+      // gravitational lens pulse — space bends inward during morphs
+      vec2 uv=vUv - c*(uWarp*0.30*exp(-r*3.5));
+      // anamorphic chromatic aberration, stronger at frame edges
+      float ca=0.0011*(0.4+r*2.4)+uWarp*0.005;
+      vec2 dir=r>0.0001?c/r:vec2(0.0);
+      float rr=texture2D(tDiffuse,uv+dir*ca).r;
+      float gg=texture2D(tDiffuse,uv).g;
+      float bb=texture2D(tDiffuse,uv-dir*ca).b;
+      vec3 col=vec3(rr,gg,bb);
+      // animated film grain
+      float g=fract(sin(dot(vUv+fract(uTime)*vec2(1.7,9.1),vec2(12.9898,78.233)))*43758.5453);
+      col+=(g-0.5)*0.028;
+      // cinematic vignette
+      col*=1.0-r*r*0.45;
+      gl_FragColor=vec4(col,1.0);
+    }`,
+};
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -944,6 +982,8 @@ export default function AetherCanvas() {
       0.42,  // threshold — only bright cores bloom
     );
     composer.addPass(bloom);
+    const cinematic=new ShaderPass(CinematicShader as any);
+    composer.addPass(cinematic);
 
     const cv=document.createElement("canvas"); cv.width=cv.height=128;
     const c2=cv.getContext("2d")!;
@@ -1165,6 +1205,39 @@ export default function AetherCanvas() {
     let saverArmed=false;
     let warp=0; // supernova pulse during form transitions
 
+    // Text-to-stars: whisper's key word spelled by all particles, then detonated
+    const textTarget=new Float32Array(N*3);
+    let spellUntil=0;
+    let pendingForm: Float32Array|null=null;
+    const fillTextTarget=(word:string):boolean=>{
+      const cw=1024,ch=256;
+      const tc=document.createElement("canvas"); tc.width=cw; tc.height=ch;
+      const tx=tc.getContext("2d"); if (!tx) return false;
+      tx.fillStyle="#000"; tx.fillRect(0,0,cw,ch);
+      tx.fillStyle="#fff"; tx.textAlign="center"; tx.textBaseline="middle";
+      let fs=190;
+      tx.font=`900 ${fs}px Arial, sans-serif`;
+      const tw=tx.measureText(word).width;
+      if (tw>cw*0.88) fs=Math.floor(fs*(cw*0.88)/tw);
+      tx.font=`900 ${fs}px Arial, sans-serif`;
+      tx.fillText(word,cw/2,ch/2);
+      const img=tx.getImageData(0,0,cw,ch).data;
+      const pts:number[]=[];
+      for (let py=0;py<ch;py+=3) for (let px=0;px<cw;px+=3) {
+        if (img[(py*cw+px)*4]>128) pts.push(px,py);
+      }
+      if (pts.length<60) return false;
+      const scale=62/cw;
+      const nPts=pts.length/2;
+      for (let i=0;i<N;i++) {
+        const k=Math.floor(Math.random()*nPts)*2;
+        textTarget[i*3]  =(pts[k]-cw/2)*scale+rn()*0.3;
+        textTarget[i*3+1]=-(pts[k+1]-ch/2)*scale+rn()*0.3;
+        textTarget[i*3+2]=rn()*0.9;
+      }
+      return true;
+    };
+
     // Foreground stardust — close parallax layer for depth
     const DUST=260;
     const dustGeo=new THREE.BufferGeometry();
@@ -1179,11 +1252,18 @@ export default function AetherCanvas() {
     scene.add(dust);
 
     sceneRef.current={
-      morph(pal:string[],fname:string,energy:number) {
+      morph(pal:string[],fname:string,energy:number,spellWord?:string) {
         const f=FORMS.includes(fname as FormType)?(fname as FormType):"spiral";
-        currentTarget=forms[f]; applyPalette(pal,colTgt); colorFrames=100;
+        applyPalette(pal,colTgt); colorFrames=100;
         energyTgt=Math.max(0,Math.min(1,energy)); burst=Math.min(1,energy+0.35); coreMat.color.set(pal[2]);
-        tintNebulae(pal); warp=1;
+        tintNebulae(pal);
+        if (spellWord&&fillTextTarget(spellWord)) {
+          // Stage 1: every particle flies into the word; stage 2 detonates into the galaxy
+          currentTarget=textTarget; spellUntil=performance.now()+2600; pendingForm=forms[f]; warp=0.3;
+          points.rotation.y=Math.PI/2-cam.theta; // face the viewer immediately
+        } else {
+          currentTarget=forms[f]; pendingForm=null; warp=1;
+        }
       },
       rebuildStars(arr:SavedStar[]) {
         const n=Math.min(arr.length,CAP);
@@ -1263,27 +1343,44 @@ export default function AetherCanvas() {
       if (burstRef.current>0) { burst=Math.max(burst,burstRef.current); burstRef.current=0; }
       burst=Math.max(0,burst-1.2*dt);
 
-      cam.radius+=(cam.targetRadius-cam.radius)*0.045;
+      cam.radius+=(cam.targetRadius-cam.radius)*(1-Math.exp(-2.8*dt));
       // Screensaver: faster auto-rotate
       const rotSpeed=saverArmed?0.18:0.04;
       if (!dragging&&now-cam.lastInput>2500) cam.theta+=rotSpeed*dt;
       updateCam();
 
-      energyCur+=(energyTgt-energyCur)*0.025;
+      energyCur+=(energyTgt-energyCur)*(1-Math.exp(-1.5*dt));
       const displayEnergy=Math.max(energyCur,burst);
       warp=Math.max(0,warp-dt*0.8);
+      // Stage 2 of text-to-stars: the word detonates into the galaxy
+      if (pendingForm&&now>spellUntil) {
+        currentTarget=pendingForm; pendingForm=null; warp=1;
+        spin=points.rotation.y;
+      }
+      const spelling=pendingForm!==null;
       // Supernova pulse: expands mid-transition, swirls extra while warping
       const warpScale=1+Math.sin(warp*Math.PI)*0.42;
-      spin+=(0.06+displayEnergy*0.5+warp*1.6)*dt;
-      points.rotation.y=spin;
+      if (spelling) {
+        // Billboard the word toward the camera, hold steady
+        let targetRot=Math.PI/2-cam.theta;
+        const cur=points.rotation.y;
+        targetRot=cur+Math.atan2(Math.sin(targetRot-cur),Math.cos(targetRot-cur));
+        points.rotation.y=cur+(targetRot-cur)*0.14;
+      } else {
+        spin+=(0.06+displayEnergy*0.5+warp*1.6)*dt;
+        points.rotation.y=spin;
+      }
       bgStars.rotation.y=spin*0.06;
       memPoints.rotation.y=spin*0.12;
       nebulaGroup.rotation.y=-spin*0.045;
       dust.rotation.y=-spin*0.22;
       dust.rotation.x=Math.sin(t*0.05)*0.1;
 
-      const amp=displayEnergy*8;
-      const morphK=0.04+warp*0.03;
+      // Particles calm down to hold the word legibly, then resume breathing
+      const amp=displayEnergy*8*(spelling?0.08:1);
+      // Framerate-independent convergence — same speed on 30fps phones and 144Hz displays
+      const morphRate=spelling?5.4:2.4+warp*1.9;
+      const morphK=1-Math.exp(-morphRate*dt);
       for (let i=0;i<N;i++) {
         const j=i*3, spd=0.5+tArr[i]*0.4;
         base[j]  +=(currentTarget[j]  -base[j]  )*morphK;
@@ -1320,7 +1417,8 @@ export default function AetherCanvas() {
       geo.attributes.position.needsUpdate=true;
 
       if (colorFrames>0) {
-        for (let i=0;i<N*3;i++) colCur[i]+=(colTgt[i]-colCur[i])*0.055;
+        const colK=1-Math.exp(-3.3*dt);
+        for (let i=0;i<N*3;i++) colCur[i]+=(colTgt[i]-colCur[i])*colK;
         geo.attributes.color.needsUpdate=true;
         colorFrames--;
       }
@@ -1331,9 +1429,12 @@ export default function AetherCanvas() {
       (memMat as any).size=3.2+Math.sin(t*1.3)*0.5;
       memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
       matUniforms.uTime.value=t;
-      matUniforms.uSize.value=0.9+displayEnergy*0.6;
-      bloom.strength=0.3+displayEnergy*0.35+warp*0.35;
-      (afterimage.uniforms as any).damp.value=Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
+      // Tiny crisp particles while spelling so letterforms stay readable
+      matUniforms.uSize.value=(0.9+displayEnergy*0.6)*(spelling?0.42:1);
+      bloom.strength=spelling?0.2:0.3+displayEnergy*0.35+warp*0.35;
+      (afterimage.uniforms as any).damp.value=spelling?0.05:Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
+      cinematic.uniforms.uTime.value=t;
+      cinematic.uniforms.uWarp.value=Math.sin(warp*Math.PI);
 
       // Shooting stars
       if (now>nextMeteor) { spawnMeteor(); nextMeteor=now+5000+Math.random()*11000; }
@@ -1451,7 +1552,11 @@ export default function AetherCanvas() {
   },[]);
 
   const applyResult=useCallback((pal:string[],fm:FormType,en:number,text:string,save?:string)=>{
-    sceneRef.current.morph?.(pal,fm,en);
+    // Spell the thought's most powerful word in stars before the galaxy forms
+    const word=save
+      ?save.split(/\s+/).map(w=>w.replace(/[^a-zA-Z0-9]/g,"")).sort((a,b)=>b.length-a.length)[0]?.toUpperCase().slice(0,12)
+      :undefined;
+    sceneRef.current.morph?.(pal,fm,en,word&&word.length>=2?word:undefined);
     setForm(fm); setAccentColor(pal[2]||"#b892ff"); lastEnergy.current=en;
     if (audioRef.current) audioRef.current.transition(fm,en);
     showMorphLabel(fm);
