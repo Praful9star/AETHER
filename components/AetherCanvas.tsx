@@ -962,6 +962,7 @@ export default function AetherCanvas() {
   const [copied,       setCopied]       = useState(false);
   const [explore,      setExplore]      = useState(false);
   const [zen,          setZen]          = useState(false);
+  const [firstContact, setFirstContact] = useState(false);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1567,6 +1568,15 @@ export default function AetherCanvas() {
     return ()=>clearTimeout(t);
   },[]);
 
+  // First Contact — gently guide brand-new visitors to their first whisper
+  useEffect(()=>{
+    try {
+      if (localStorage.getItem("aether_visited")) return;
+    } catch { return; }
+    const t=setTimeout(()=>setFirstContact(true),7000);
+    return ()=>clearTimeout(t);
+  },[]);
+
   // Restore constellation + streak from previous visits
   useEffect(()=>{
     try {
@@ -1614,10 +1624,12 @@ export default function AetherCanvas() {
     applyResult(FALLBACK_PALETTES[h%FALLBACK_PALETTES.length],FORMS[h%FORMS.length],Math.min(1,0.25+(text.length%80)/90),FALLBACK_LINES[h%FALLBACK_LINES.length],text);
   },[applyResult]);
 
-  const ask=useCallback(async()=>{
-    const text=thought.trim();
+  const release=useCallback(async(raw:string)=>{
+    const text=raw.trim();
     if (!text||loading) return;
     setLoading(true); setThought(""); burstRef.current=0.8;
+    setFirstContact(false);
+    try{localStorage.setItem("aether_visited","1");}catch{}
     lastActRef.current=performance.now();
     try{navigator.vibrate?.(25);}catch{}
     try {
@@ -1629,7 +1641,9 @@ export default function AetherCanvas() {
       applyResult(pal,fm,typeof data.energy==="number"?data.energy:0.5,String(data.whisper||FALLBACK_LINES[0]).slice(0,180),text);
     } catch { fallback(text); }
     finally { setLoading(false); }
-  },[thought,loading,applyResult,fallback]);
+  },[loading,applyResult,fallback]);
+
+  const ask=useCallback(()=>release(thought),[release,thought]);
 
   const toggleSound=()=>{
     if (!audioRef.current) audioRef.current=makeAudio();
@@ -1652,6 +1666,64 @@ export default function AetherCanvas() {
   useEffect(()=>{sceneRef.current.onStarTap=(i:number)=>{const s=starsRef.current[i];if(s)revisit(s);};});
 
   const capture=()=>{ try{setCaptureURL(sceneRef.current.snapshot?.(whisper)??null);}catch{} };
+
+  // "Week in Stars" — shareable recap card drawn from your constellation
+  const weekCard=useCallback(()=>{
+    const stars=starsRef.current;
+    if (!stars.length) return;
+    const c=document.createElement("canvas"); c.width=1080; c.height=1920;
+    const o=c.getContext("2d"); if (!o) return;
+    const bg=o.createLinearGradient(0,0,0,1920);
+    bg.addColorStop(0,"#050310"); bg.addColorStop(0.6,"#0a0620"); bg.addColorStop(1,"#050310");
+    o.fillStyle=bg; o.fillRect(0,0,1080,1920);
+    for (let i=0;i<170;i++) {
+      o.globalAlpha=0.08+Math.random()*0.4;
+      o.fillStyle="#cfd3ff";
+      o.beginPath(); o.arc(Math.random()*1080,Math.random()*1920,0.5+Math.random()*1.3,0,Math.PI*2); o.fill();
+    }
+    o.globalAlpha=1; o.textAlign="center";
+    o.fillStyle="rgba(220,216,255,.55)"; o.font="300 26px 'Helvetica Neue', Arial, sans-serif";
+    o.fillText("M Y   W E E K   I N   T H E   C O S M O S",540,210);
+    // Constellation plot — most recent 14 stars, connected chronologically
+    const recent=stars.slice(-14);
+    const px=(p:[number,number,number])=>540+p[0]*4.6;
+    const py=(p:[number,number,number])=>830+p[1]*4.6;
+    o.strokeStyle="rgba(150,160,230,.4)"; o.lineWidth=1.6;
+    o.beginPath();
+    recent.forEach((s,i)=>{ const x=px(s.pos),y=py(s.pos); i===0?o.moveTo(x,y):o.lineTo(x,y); });
+    o.stroke();
+    recent.forEach(s=>{
+      const col=s.palette[2]||"#b892ff";
+      o.shadowColor=col; o.shadowBlur=26; o.fillStyle=col;
+      o.beginPath(); o.arc(px(s.pos),py(s.pos),9,0,Math.PI*2); o.fill();
+    });
+    o.shadowBlur=0;
+    // Stats
+    o.fillStyle="#f3f0ff"; o.font="100 130px Georgia, serif";
+    o.fillText(String(stars.length),540,1420);
+    o.fillStyle="rgba(200,196,235,.5)"; o.font="300 24px 'Helvetica Neue', Arial, sans-serif";
+    o.fillText(`THOUGHT${stars.length===1?"":"S"} BECAME STARS${streak>1?`   ·   DAY ${streak} STREAK`:""}`,540,1478);
+    // Best whisper
+    const best=[...stars].sort((a,b)=>b.whisper.length-a.whisper.length)[0];
+    if (best) {
+      o.fillStyle="rgba(233,228,255,.85)"; o.font="italic 400 40px Georgia, serif";
+      o.shadowColor="rgba(130,100,230,.8)"; o.shadowBlur=28;
+      const words=best.whisper.split(" "); let line=""; const lines:string[]=[];
+      for (const w of words) {
+        if (o.measureText(line+w).width>860&&line){lines.push(line.trim());line=w+" ";}
+        else line+=w+" ";
+      }
+      if (line.trim()) lines.push(line.trim());
+      lines.slice(0,3).forEach((ln,i)=>o.fillText(ln,540,1580+i*56));
+      o.shadowBlur=0;
+    }
+    o.fillStyle="rgba(233,228,255,.92)"; o.font="300 32px 'Helvetica Neue', Arial, sans-serif";
+    o.fillText("✦  AETHER",540,1800);
+    o.fillStyle="rgba(200,196,235,.4)"; o.font="300 17px 'Helvetica Neue', Arial, sans-serif";
+    o.fillText("A LIVING COSMOS",540,1840);
+    setCaptureURL(c.toDataURL("image/png"));
+    setPanel(false);
+  },[streak]);
   const clearStars=()=>{ starsRef.current=[];sceneRef.current.rebuildStars?.([]);setList([]);setCount(0); try{localStorage.removeItem("aether_stars");}catch{} };
 
   const shareWhisper=useCallback(async()=>{
@@ -1828,6 +1900,31 @@ export default function AetherCanvas() {
         </AnimatePresence>
       </div>
 
+      {/* First Contact — guided first whisper */}
+      <AnimatePresence>
+        {firstContact&&!zen&&!loading&&(
+          <motion.div
+            initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} exit={{opacity:0,y:10}}
+            transition={{duration:1.4,ease:[0.22,1,0.36,1]}}
+            style={{position:"absolute",left:0,right:0,bottom:96,display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"0 18px",zIndex:2}}
+          >
+            <div style={{color:"rgba(200,196,235,.5)",fontSize:12,fontFamily:"Georgia, serif",fontStyle:"italic",textShadow:"0 1px 8px rgba(0,0,0,.8)"}}>
+              Try whispering one of these to the void…
+            </div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center"}}>
+              {["the calm before a storm","someone I still miss","infinite possibility"].map(chip=>(
+                <button key={chip} onClick={()=>release(chip)}
+                  style={{background:"rgba(14,10,28,.72)",backdropFilter:"blur(12px)",border:`1px solid ${a44}`,color:"rgba(226,222,255,.85)",borderRadius:999,padding:"9px 18px",fontSize:12.5,fontFamily:"Georgia, serif",fontStyle:"italic",cursor:"pointer",boxShadow:`0 0 16px ${a44}`,transition:"all 0.35s ease"}}
+                  onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.borderColor=a88;(e.currentTarget as HTMLElement).style.color="#fff";}}
+                  onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.borderColor=a44;(e.currentTarget as HTMLElement).style.color="rgba(226,222,255,.85)";}}>
+                  {chip}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Input */}
       <div style={{position:"absolute",left:0,right:0,bottom:28,display:"flex",justifyContent:"center",padding:"0 18px",...ui}}>
         <div style={{width:"100%",maxWidth:580,display:"flex",gap:8,alignItems:"center"}}>
@@ -1952,10 +2049,16 @@ export default function AetherCanvas() {
               ))}
             </div>
             {list.length>0&&(
-              <button onClick={clearStars}
-                style={{margin:"10px 22px 20px",background:"none",border:"1px solid rgba(180,120,140,.28)",color:"rgba(230,170,190,.6)",borderRadius:999,padding:9,fontSize:9.5,letterSpacing:"0.2em",cursor:"pointer",fontFamily:"inherit"}}>
-                DISSOLVE ALL STARS
-              </button>
+              <>
+                <button onClick={weekCard}
+                  style={{margin:"10px 22px 0",background:`linear-gradient(135deg,${a44},${a66}33)`,border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:10,fontSize:9.5,letterSpacing:"0.2em",cursor:"pointer",fontFamily:"inherit",boxShadow:`0 0 18px ${a44}`}}>
+                  ✦ MY WEEK IN STARS
+                </button>
+                <button onClick={clearStars}
+                  style={{margin:"10px 22px 20px",background:"none",border:"1px solid rgba(180,120,140,.28)",color:"rgba(230,170,190,.6)",borderRadius:999,padding:9,fontSize:9.5,letterSpacing:"0.2em",cursor:"pointer",fontFamily:"inherit"}}>
+                  DISSOLVE ALL STARS
+                </button>
+              </>
             )}
           </motion.div>
         )}
