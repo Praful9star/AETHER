@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -911,6 +912,7 @@ export default function AetherCanvas() {
   const [streak,       setStreak]       = useState(0);
   const [shareId,      setShareId]      = useState<string|null>(null);
   const [copied,       setCopied]       = useState(false);
+  const [explore,      setExplore]      = useState(false);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -932,11 +934,14 @@ export default function AetherCanvas() {
     // Cinematic bloom post-processing
     const composer=new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene,camera));
+    // Dreamy motion trails — length reacts to energy and morph warps
+    const afterimage=new AfterimagePass(0.3);
+    composer.addPass(afterimage);
     const bloom=new UnrealBloomPass(
       new THREE.Vector2(mount.clientWidth,mount.clientHeight),
-      0.45,  // strength — subtle halo, not blowout
-      0.5,   // radius
-      0.32,  // threshold — only bright cores bloom
+      0.4,   // strength — subtle halo, not blowout
+      0.45,  // radius
+      0.42,  // threshold — only bright cores bloom
     );
     composer.addPass(bloom);
 
@@ -1158,13 +1163,27 @@ export default function AetherCanvas() {
     let energyCur=0.35,energyTgt=0.35,colorFrames=0,spin=0,burst=0;
     let currentTarget=forms.spiral;
     let saverArmed=false;
+    let warp=0; // supernova pulse during form transitions
+
+    // Foreground stardust — close parallax layer for depth
+    const DUST=260;
+    const dustGeo=new THREE.BufferGeometry();
+    const dustPos=new Float32Array(DUST*3);
+    for (let i=0;i<DUST;i++) {
+      const a=Math.random()*Math.PI*2,b=Math.acos(2*Math.random()-1),r=16+Math.random()*38;
+      dustPos[i*3]=r*Math.sin(b)*Math.cos(a); dustPos[i*3+1]=r*Math.cos(b); dustPos[i*3+2]=r*Math.sin(b)*Math.sin(a);
+    }
+    dustGeo.setAttribute("position",new THREE.BufferAttribute(dustPos,3));
+    const dustMat=new THREE.PointsMaterial({size:0.28,color:0xaab4dd,map:sprite,transparent:true,opacity:0.4,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true});
+    const dust=new THREE.Points(dustGeo,dustMat);
+    scene.add(dust);
 
     sceneRef.current={
       morph(pal:string[],fname:string,energy:number) {
         const f=FORMS.includes(fname as FormType)?(fname as FormType):"spiral";
         currentTarget=forms[f]; applyPalette(pal,colTgt); colorFrames=100;
         energyTgt=Math.max(0,Math.min(1,energy)); burst=Math.min(1,energy+0.35); coreMat.color.set(pal[2]);
-        tintNebulae(pal);
+        tintNebulae(pal); warp=1;
       },
       rebuildStars(arr:SavedStar[]) {
         const n=Math.min(arr.length,CAP);
@@ -1252,22 +1271,28 @@ export default function AetherCanvas() {
 
       energyCur+=(energyTgt-energyCur)*0.025;
       const displayEnergy=Math.max(energyCur,burst);
-      spin+=(0.06+displayEnergy*0.5)*dt;
+      warp=Math.max(0,warp-dt*0.8);
+      // Supernova pulse: expands mid-transition, swirls extra while warping
+      const warpScale=1+Math.sin(warp*Math.PI)*0.42;
+      spin+=(0.06+displayEnergy*0.5+warp*1.6)*dt;
       points.rotation.y=spin;
       bgStars.rotation.y=spin*0.06;
       memPoints.rotation.y=spin*0.12;
       nebulaGroup.rotation.y=-spin*0.045;
+      dust.rotation.y=-spin*0.22;
+      dust.rotation.x=Math.sin(t*0.05)*0.1;
 
       const amp=displayEnergy*8;
+      const morphK=0.04+warp*0.03;
       for (let i=0;i<N;i++) {
         const j=i*3, spd=0.5+tArr[i]*0.4;
-        base[j]  +=(currentTarget[j]  -base[j]  )*0.04;
-        base[j+1]+=(currentTarget[j+1]-base[j+1])*0.04;
-        base[j+2]+=(currentTarget[j+2]-base[j+2])*0.04;
+        base[j]  +=(currentTarget[j]  -base[j]  )*morphK;
+        base[j+1]+=(currentTarget[j+1]-base[j+1])*morphK;
+        base[j+2]+=(currentTarget[j+2]-base[j+2])*morphK;
         const ph=phase[i];
-        posArr[j]  =base[j]  +Math.sin(t*spd      +ph      )*amp;
-        posArr[j+1]=base[j+1]+Math.sin(t*spd*1.3  +ph*1.7  )*amp;
-        posArr[j+2]=base[j+2]+Math.cos(t*spd*0.9  +ph      )*amp;
+        posArr[j]  =base[j]  *warpScale+Math.sin(t*spd      +ph      )*amp;
+        posArr[j+1]=base[j+1]*warpScale+Math.sin(t*spd*1.3  +ph*1.7  )*amp;
+        posArr[j+2]=base[j+2]*warpScale+Math.cos(t*spd*0.9  +ph      )*amp;
       }
 
       // Cursor gravity — particles attracted toward mouse world position
@@ -1307,7 +1332,8 @@ export default function AetherCanvas() {
       memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
       matUniforms.uTime.value=t;
       matUniforms.uSize.value=0.9+displayEnergy*0.6;
-      bloom.strength=0.35+displayEnergy*0.45;
+      bloom.strength=0.3+displayEnergy*0.35+warp*0.35;
+      (afterimage.uniforms as any).damp.value=Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
 
       // Shooting stars
       if (now>nextMeteor) { spawnMeteor(); nextMeteor=now+5000+Math.random()*11000; }
@@ -1354,6 +1380,7 @@ export default function AetherCanvas() {
       memGeo.dispose(); memMat.dispose(); coreMat.dispose();
       meteorGeo.dispose(); meteorMat.dispose();
       nebulaMats.forEach(nm=>nm.dispose());
+      dustGeo.dispose(); dustMat.dispose();
       composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
@@ -1518,6 +1545,30 @@ export default function AetherCanvas() {
 
   const wakeFromSaver=useCallback(()=>{ lastActRef.current=performance.now(); setScreensaver(false); },[]);
 
+  // Galaxy Explorer — browse all 30 forms directly
+  const exploreForm=useCallback((fm:FormType,i:number)=>{
+    const pal=FALLBACK_PALETTES[i%FALLBACK_PALETTES.length];
+    sceneRef.current.morph?.(pal,fm,0.55);
+    setForm(fm); setAccentColor(pal[2]);
+    if (audioRef.current) audioRef.current.transition(fm,0.55);
+    showMorphLabel(fm);
+    lastActRef.current=performance.now();
+  },[showMorphLabel]);
+
+  // Ambient tour — while the screensaver runs, drift through random galaxies
+  useEffect(()=>{
+    if (!screensaver) return;
+    const iv=setInterval(()=>{
+      const i=Math.floor(Math.random()*FORMS.length);
+      const fm=FORMS[i];
+      const pal=FALLBACK_PALETTES[i%FALLBACK_PALETTES.length];
+      sceneRef.current.morph?.(pal,fm,0.4);
+      setForm(fm); setAccentColor(pal[2]);
+      showMorphLabel(fm);
+    },11000);
+    return ()=>clearInterval(iv);
+  },[screensaver,showMorphLabel]);
+
   const ui={opacity:show?1:0,transition:"opacity 1.2s ease"};
   const a44=accentColor+"44";
   const a66=accentColor+"66";
@@ -1590,6 +1641,7 @@ export default function AetherCanvas() {
         {([
           ["SOUND · "+(sound?"ON":"OFF"),toggleSound],
           ["STARS · "+count,()=>setPanel(p=>!p)],
+          ["EXPLORE · 30",()=>setExplore(e=>!e)],
           ["CAPTURE ✦",capture],
         ] as [string,()=>void][]).map(([label,fn])=>(
           <button key={label} onClick={fn}
@@ -1663,6 +1715,40 @@ export default function AetherCanvas() {
       <div style={{position:"absolute",bottom:8,left:0,right:0,textAlign:"center",color:"rgba(190,186,225,.25)",fontSize:9,letterSpacing:"0.22em",pointerEvents:"none"}}>
         DRAG TO ORBIT · PINCH TO ZOOM · TAP A STAR TO REVISIT
       </div>
+
+      {/* Galaxy Explorer panel — browse all 30 forms */}
+      <AnimatePresence>
+        {explore&&(
+          <motion.div
+            initial={{x:-340}} animate={{x:0}} exit={{x:-340}}
+            transition={{type:"spring",damping:28,stiffness:280}}
+            style={{position:"absolute",top:0,left:0,bottom:0,width:"min(300px, 82vw)",background:"rgba(7,4,14,.9)",backdropFilter:"blur(20px)",borderRight:`1px solid ${a44}`,display:"flex",flexDirection:"column",zIndex:5}}
+          >
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 22px 6px"}}>
+              <div style={{color:"#e9e6ff",fontSize:11,letterSpacing:"0.3em"}}>GALAXY EXPLORER</div>
+              <button onClick={()=>setExplore(false)} style={{background:"none",border:"none",color:"rgba(220,216,255,.55)",fontSize:18,cursor:"pointer"}}>&times;</button>
+            </div>
+            <div style={{color:"rgba(200,196,235,.34)",fontSize:11,padding:"0 22px 12px",fontStyle:"italic",fontFamily:"Georgia, serif"}}>
+              30 living forms. Tap any to become it.
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"0 10px 16px"}}>
+              {FORMS.map((f,i)=>{
+                const c=FALLBACK_PALETTES[i%FALLBACK_PALETTES.length][2];
+                const active=f===form;
+                return (
+                  <button key={f} onClick={()=>exploreForm(f,i)}
+                    style={{display:"flex",alignItems:"center",gap:11,width:"100%",textAlign:"left",background:active?`${c}18`:"none",border:"none",borderLeft:active?`2px solid ${c}`:"2px solid transparent",padding:"9px 12px",cursor:"pointer",borderRadius:6}}>
+                    <span style={{width:7,height:7,borderRadius:99,background:c,boxShadow:`0 0 9px ${c}`,flexShrink:0}}/>
+                    <span style={{color:active?"#fff":"rgba(216,212,242,.72)",fontSize:10.5,letterSpacing:"0.22em",fontFamily:"'Helvetica Neue', Arial, sans-serif"}}>
+                      {FORM_LABELS[f]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Stars panel */}
       <AnimatePresence>
