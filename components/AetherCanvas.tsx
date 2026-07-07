@@ -699,6 +699,11 @@ function makeAudio() {
     const o=ac.createOscillator(); o.type="sine"; o.frequency.value=f;
     const g=ac.createGain(); g.gain.value=0.10; o.connect(g); g.connect(lp); o.start();
   });
+  const analyser=ac.createAnalyser();
+  analyser.fftSize=128; analyser.smoothingTimeConstant=0.78;
+  master.connect(analyser);
+  const aData=new Uint8Array(analyser.frequencyBinCount);
+
   const nBuf=ac.createBuffer(1,2*ac.sampleRate,ac.sampleRate);
   const nData=nBuf.getChannelData(0); for (let i=0;i<nData.length;i++) nData[i]=Math.random()*2-1;
   const nSrc=ac.createBufferSource(); nSrc.buffer=nBuf; nSrc.loop=true;
@@ -734,6 +739,11 @@ function makeAudio() {
     ac,
     on()  { if (ac.state==="suspended") ac.resume(); master.gain.setTargetAtTime(0.5,ac.currentTime,0.6); },
     off() { master.gain.setTargetAtTime(0,ac.currentTime,0.4); },
+    level() {
+      analyser.getByteFrequencyData(aData);
+      let s=0; for (let i=0;i<aData.length;i++) s+=aData[i];
+      return s/(aData.length*255);
+    },
 
     transition(form: FormType, energy: number) {
       if (ac.state==="suspended") ac.resume();
@@ -951,6 +961,7 @@ export default function AetherCanvas() {
   const [shareId,      setShareId]      = useState<string|null>(null);
   const [copied,       setCopied]       = useState(false);
   const [explore,      setExplore]      = useState(false);
+  const [zen,          setZen]          = useState(false);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1123,6 +1134,15 @@ export default function AetherCanvas() {
     const memPoints=new THREE.Points(memGeo,memMat);
     scene.add(memPoints);
 
+    // Constellation lines — the emotional journey drawn between memory stars
+    const memLinePos=new Float32Array((CAP-1)*2*3).fill(1e5);
+    const memLineGeo=new THREE.BufferGeometry();
+    memLineGeo.setAttribute("position",new THREE.BufferAttribute(memLinePos,3));
+    memLineGeo.setDrawRange(0,0);
+    const memLineMat=new THREE.LineBasicMaterial({color:0x93a0e0,transparent:true,opacity:0.2,blending:THREE.AdditiveBlending,depthWrite:false});
+    const memLines=new THREE.LineSegments(memLineGeo,memLineMat);
+    scene.add(memLines);
+
     const cam={theta:0.6,phi:1.15,radius:150,targetRadius:62,lastInput:performance.now()};
     const updateCam=()=>{
       const gyro=gyroRef.current;
@@ -1278,6 +1298,19 @@ export default function AetherCanvas() {
         memGeo.setDrawRange(0,n);
         memGeo.attributes.position.needsUpdate=true;
         memGeo.attributes.color.needsUpdate=true;
+        // Chronological constellation lines
+        for (let i=0;i<CAP-1;i++) {
+          if (i<n-1) {
+            for (let k=0;k<3;k++) {
+              memLinePos[i*6+k]  =arr[i].pos[k];
+              memLinePos[i*6+3+k]=arr[i+1].pos[k];
+            }
+          } else {
+            for (let k=0;k<6;k++) memLinePos[i*6+k]=1e5;
+          }
+        }
+        memLineGeo.setDrawRange(0,Math.max(0,(n-1)*2));
+        memLineGeo.attributes.position.needsUpdate=true;
       },
       snapshot(whisperText:string) {
         const W=mount.clientWidth,H=mount.clientHeight;
@@ -1372,12 +1405,16 @@ export default function AetherCanvas() {
       }
       bgStars.rotation.y=spin*0.06;
       memPoints.rotation.y=spin*0.12;
+      memLines.rotation.y=spin*0.12;
+      memLineMat.opacity=0.14+Math.sin(t*0.7)*0.07;
       nebulaGroup.rotation.y=-spin*0.045;
       dust.rotation.y=-spin*0.22;
       dust.rotation.x=Math.sin(t*0.05)*0.1;
 
+      // Sound-reactive: the galaxy physically pulses to its own soundscape
+      const aLvl=spelling?0:(sceneRef.current.getAudioLevel?.()??0);
       // Particles calm down to hold the word legibly, then resume breathing
-      const amp=displayEnergy*8*(spelling?0.08:1);
+      const amp=displayEnergy*8*(spelling?0.08:1)+aLvl*7;
       // Framerate-independent convergence — same speed on 30fps phones and 144Hz displays
       const morphRate=spelling?5.4:2.4+warp*1.9;
       const morphK=1-Math.exp(-morphRate*dt);
@@ -1430,8 +1467,8 @@ export default function AetherCanvas() {
       memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
       matUniforms.uTime.value=t;
       // Tiny crisp particles while spelling so letterforms stay readable
-      matUniforms.uSize.value=(0.9+displayEnergy*0.6)*(spelling?0.42:1);
-      bloom.strength=spelling?0.2:0.3+displayEnergy*0.35+warp*0.35;
+      matUniforms.uSize.value=(0.9+displayEnergy*0.6+aLvl*0.5)*(spelling?0.42:1);
+      bloom.strength=spelling?0.2:0.3+displayEnergy*0.35+warp*0.35+aLvl*0.3;
       (afterimage.uniforms as any).damp.value=spelling?0.05:Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
       cinematic.uniforms.uTime.value=t;
       cinematic.uniforms.uWarp.value=Math.sin(warp*Math.PI);
@@ -1478,7 +1515,7 @@ export default function AetherCanvas() {
       el.removeEventListener("touchmove",onTM);
       geo.dispose(); mat.dispose(); sGeo.dispose(); sprite.dispose();
       (bgStars.material as THREE.Material).dispose();
-      memGeo.dispose(); memMat.dispose(); coreMat.dispose();
+      memGeo.dispose(); memMat.dispose(); memLineGeo.dispose(); memLineMat.dispose(); coreMat.dispose();
       meteorGeo.dispose(); meteorMat.dispose();
       nebulaMats.forEach(nm=>nm.dispose());
       dustGeo.dispose(); dustMat.dispose();
@@ -1521,6 +1558,14 @@ export default function AetherCanvas() {
       .then(d=>{ if (d?.ok&&d.id) setShareId(d.id); })
       .catch(()=>{});
   },[bumpStreak]);
+
+  // Cinematic intro — the cosmos introduces itself, spelled in stars
+  useEffect(()=>{
+    const t=setTimeout(()=>{
+      sceneRef.current.morph?.(FALLBACK_PALETTES[0],"spiral",0.5,"AETHER");
+    },1100);
+    return ()=>clearTimeout(t);
+  },[]);
 
   // Restore constellation + streak from previous visits
   useEffect(()=>{
@@ -1574,6 +1619,7 @@ export default function AetherCanvas() {
     if (!text||loading) return;
     setLoading(true); setThought(""); burstRef.current=0.8;
     lastActRef.current=performance.now();
+    try{navigator.vibrate?.(25);}catch{}
     try {
       const res=await fetch("/api/whisper",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thought:text})});
       if (!res.ok) throw new Error("api");
@@ -1589,7 +1635,10 @@ export default function AetherCanvas() {
     if (!audioRef.current) audioRef.current=makeAudio();
     if (!audioRef.current) return;
     if (sound){audioRef.current.off();setSound(false);}
-    else{audioRef.current.on();setSound(true);}
+    else{
+      audioRef.current.on();setSound(true);
+      sceneRef.current.getAudioLevel=()=>audioRef.current?.level()??0;
+    }
   };
 
   const revisit=useCallback((s:SavedStar)=>{
@@ -1674,7 +1723,15 @@ export default function AetherCanvas() {
     return ()=>clearInterval(iv);
   },[screensaver,showMorphLabel]);
 
-  const ui={opacity:show?1:0,transition:"opacity 1.2s ease"};
+  // Exit zen with Escape
+  useEffect(()=>{
+    if (!zen) return;
+    const onKey=(e:KeyboardEvent)=>{ if (e.key==="Escape") setZen(false); };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[zen]);
+
+  const ui={opacity:show&&!zen?1:0,transition:"opacity 1.2s ease",pointerEvents:(show&&!zen?"auto":"none") as React.CSSProperties["pointerEvents"]};
   const a44=accentColor+"44";
   const a66=accentColor+"66";
   const a88=accentColor+"88";
@@ -1724,7 +1781,7 @@ export default function AetherCanvas() {
       </AnimatePresence>
 
       {/* Header */}
-      <div style={{position:"absolute",top:22,left:24,pointerEvents:"none",...ui}}>
+      <div style={{position:"absolute",top:22,left:24,...ui,pointerEvents:"none"}}>
         <div style={{color:"#eceaff",fontSize:13,letterSpacing:"0.62em",fontWeight:300,textShadow:`0 0 28px ${a66}`}}>
           A E T H E R
         </div>
@@ -1747,6 +1804,7 @@ export default function AetherCanvas() {
           ["SOUND · "+(sound?"ON":"OFF"),toggleSound],
           ["STARS · "+count,()=>setPanel(p=>!p)],
           ["EXPLORE · 30",()=>setExplore(e=>!e)],
+          ["ZEN MODE",()=>setZen(true)],
           ["CAPTURE ✦",capture],
         ] as [string,()=>void][]).map(([label,fn])=>(
           <button key={label} onClick={fn}
@@ -1757,7 +1815,7 @@ export default function AetherCanvas() {
       </div>
 
       {/* Whisper */}
-      <div style={{position:"absolute",left:0,right:0,top:"18%",display:"flex",justifyContent:"center",padding:"0 36px",pointerEvents:"none"}}>
+      <div style={{position:"absolute",left:0,right:0,top:"18%",display:"flex",justifyContent:"center",padding:"0 36px",pointerEvents:"none",opacity:zen?0:1,transition:"opacity 1.2s ease"}}>
         <AnimatePresence mode="wait">
           <motion.div
             key={loading?"__loading__":whisper}
@@ -1817,9 +1875,19 @@ export default function AetherCanvas() {
       </div>
 
       {/* Hint */}
-      <div style={{position:"absolute",bottom:8,left:0,right:0,textAlign:"center",color:"rgba(190,186,225,.25)",fontSize:9,letterSpacing:"0.22em",pointerEvents:"none"}}>
+      <div style={{position:"absolute",bottom:8,left:0,right:0,textAlign:"center",color:"rgba(190,186,225,.25)",fontSize:9,letterSpacing:"0.22em",pointerEvents:"none",opacity:zen?0:1,transition:"opacity 1.2s ease"}}>
         DRAG TO ORBIT · PINCH TO ZOOM · TAP A STAR TO REVISIT
       </div>
+
+      {/* Zen mode exit */}
+      {zen&&(
+        <button onClick={()=>setZen(false)}
+          style={{position:"absolute",top:20,right:20,zIndex:6,background:"rgba(10,6,22,0.4)",backdropFilter:"blur(8px)",border:"1px solid rgba(184,146,255,0.14)",color:"rgba(200,196,235,0.3)",borderRadius:999,padding:"8px 16px",fontSize:8.5,letterSpacing:"0.3em",cursor:"pointer",fontFamily:"inherit",transition:"all 0.4s ease"}}
+          onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.color="rgba(200,196,235,0.75)";}}
+          onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.color="rgba(200,196,235,0.3)";}}>
+          EXIT ZEN
+        </button>
+      )}
 
       {/* Galaxy Explorer panel — browse all 30 forms */}
       <AnimatePresence>
