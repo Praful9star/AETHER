@@ -97,6 +97,7 @@ const CinematicShader = {
     tDiffuse: { value: null as THREE.Texture|null },
     uTime:    { value: 0 },
     uWarp:    { value: 0 },
+    uTod:     { value: 0 }, // -1 cold midnight … +1 warm golden hour
   },
   vertexShader: `
     varying vec2 vUv;
@@ -105,6 +106,7 @@ const CinematicShader = {
     uniform sampler2D tDiffuse;
     uniform float uTime;
     uniform float uWarp;
+    uniform float uTod;
     varying vec2 vUv;
     void main(){
       vec2 c=vUv-0.5;
@@ -118,6 +120,10 @@ const CinematicShader = {
       float gg=texture2D(tDiffuse,uv).g;
       float bb=texture2D(tDiffuse,uv-dir*ca).b;
       vec3 col=vec3(rr,gg,bb);
+      // time-of-day grade — warm amber by day, cool indigo at night
+      col.r*=1.0+uTod*0.06;
+      col.b*=1.0-uTod*0.06;
+      col.g*=1.0+uTod*0.015;
       // animated film grain
       float g=fract(sin(dot(vUv+fract(uTime)*vec2(1.7,9.1),vec2(12.9898,78.233)))*43758.5453);
       col+=(g-0.5)*0.028;
@@ -1145,14 +1151,21 @@ export default function AetherCanvas() {
     scene.add(memLines);
 
     const cam={theta:0.6,phi:1.15,radius:150,targetRadius:62,lastInput:performance.now()};
+    // Ambient cursor parallax — the cosmos leans gently toward the pointer
+    let parX=0,parY=0;
     const updateCam=()=>{
       const gyro=gyroRef.current;
       const gyroTheta=gyro.gamma*(Math.PI/180)*0.04;
       const gyroPhi=gyro.beta*(Math.PI/180)*0.03;
+      const m=mouseRef.current;
+      const tx=m.active&&!dragging?m.x*0.14:0;
+      const ty=m.active&&!dragging?m.y*0.10:0;
+      parX+=(tx-parX)*0.045; parY+=(ty-parY)*0.045;
+      const ph=Math.max(0.14,Math.min(Math.PI-0.14,cam.phi+gyroPhi-parY));
       camera.position.set(
-        cam.radius*Math.sin(cam.phi+gyroPhi)*Math.cos(cam.theta+gyroTheta),
-        cam.radius*Math.cos(cam.phi+gyroPhi),
-        cam.radius*Math.sin(cam.phi+gyroPhi)*Math.sin(cam.theta+gyroTheta),
+        cam.radius*Math.sin(ph)*Math.cos(cam.theta+gyroTheta+parX),
+        cam.radius*Math.cos(ph),
+        cam.radius*Math.sin(ph)*Math.sin(cam.theta+gyroTheta+parX),
       );
       camera.lookAt(0,0,0);
     };
@@ -1473,6 +1486,9 @@ export default function AetherCanvas() {
       (afterimage.uniforms as any).damp.value=spelling?0.05:Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
       cinematic.uniforms.uTime.value=t;
       cinematic.uniforms.uWarp.value=Math.sin(warp*Math.PI);
+      // Real local time → warm midday (+1), cold small-hours (-1)
+      const hr=new Date().getHours()+new Date().getMinutes()/60;
+      cinematic.uniforms.uTod.value=Math.cos((hr-14)/24*Math.PI*2);
 
       // Shooting stars
       if (now>nextMeteor) { spawnMeteor(); nextMeteor=now+5000+Math.random()*11000; }
