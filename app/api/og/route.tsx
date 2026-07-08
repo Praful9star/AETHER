@@ -78,7 +78,7 @@ export async function GET(req: Request) {
             paddingLeft: 24,
           }}
         >
-          &ldquo;{whisper}&rdquo;
+          {`“${whisper}”`}
         </div>
         <div
           style={{
@@ -88,7 +88,7 @@ export async function GET(req: Request) {
             letterSpacing: "0.3em",
           }}
         >
-          {form.toUpperCase()} · AETHER.APP
+          {`${form.toUpperCase()} · A LIVING COSMOS`}
         </div>
       </div>
     ),
