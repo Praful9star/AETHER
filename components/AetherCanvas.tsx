@@ -1795,13 +1795,33 @@ export default function AetherCanvas() {
     return ()=>clearInterval(iv);
   },[screensaver,showMorphLabel]);
 
-  // Exit zen with Escape
+  // Step through the 30 forms with arrow keys
+  const stepForm=useCallback((dir:number)=>{
+    const cur=FORMS.indexOf(form);
+    const i=((cur<0?0:cur)+dir+FORMS.length)%FORMS.length;
+    exploreForm(FORMS[i],i);
+  },[form,exploreForm]);
+
+  // Global keyboard shortcuts (ignored while typing in the whisper box)
   useEffect(()=>{
-    if (!zen) return;
-    const onKey=(e:KeyboardEvent)=>{ if (e.key==="Escape") setZen(false); };
+    const onKey=(e:KeyboardEvent)=>{
+      if (e.key==="Escape") { setZen(false); setExplore(false); setPanel(false); setCaptureURL(null); return; }
+      const el=document.activeElement;
+      if (el&&(el.tagName==="TEXTAREA"||el.tagName==="INPUT")) return;
+      if (e.metaKey||e.ctrlKey||e.altKey) return;
+      switch (e.key) {
+        case "ArrowRight": case "ArrowDown": e.preventDefault(); stepForm(1); break;
+        case "ArrowLeft":  case "ArrowUp":   e.preventDefault(); stepForm(-1); break;
+        case "z": case "Z": setZen(v=>!v); break;
+        case "e": case "E": setExplore(v=>!v); break;
+        case "s": case "S": toggleSound(); break;
+        case "c": case "C": capture(); break;
+        case " ": e.preventDefault(); { const i=Math.floor(Math.random()*FORMS.length); exploreForm(FORMS[i],i); } break;
+      }
+    };
     window.addEventListener("keydown",onKey);
     return ()=>window.removeEventListener("keydown",onKey);
-  },[zen]);
+  },[stepForm,exploreForm,toggleSound,capture]);
 
   const ui={opacity:show&&!zen?1:0,transition:"opacity 1.2s ease",pointerEvents:(show&&!zen?"auto":"none") as React.CSSProperties["pointerEvents"]};
   const a44=accentColor+"44";
