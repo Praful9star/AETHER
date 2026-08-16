@@ -1265,6 +1265,34 @@ export default function AetherCanvas() {
           wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel:true});
           markAct();
         }
+      } else if (moved>=8&&sculptPts.length>=2) {
+        // Releasing a real drag — flick nearby particles once, in the
+        // direction and rough magnitude of the release motion, using the
+        // last two sculpt points already recorded along the drag path. This
+        // is a single immediate mutation, not a sustained per-frame force —
+        // there is no state to leave behind or decay, so it can't compound.
+        const pLast=sculptPts[sculptPts.length-1], pPrev=sculptPts[sculptPts.length-2];
+        const dtS=Math.max(0.001,(pLast.born-pPrev.born)/1000);
+        let vx=(pLast.x-pPrev.x)/dtS, vy=(pLast.y-pPrev.y)/dtS, vz=(pLast.z-pPrev.z)/dtS;
+        const vMag=Math.min(14,Math.sqrt(vx*vx+vy*vy+vz*vz)); // clamp — a stray huge delta can't fling particles off-scene
+        if (vMag>0.5) {
+          const ux=vx/Math.max(0.001,Math.sqrt(vx*vx+vy*vy+vz*vz)), uy=vy/Math.max(0.001,Math.sqrt(vx*vx+vy*vy+vz*vz)), uz=vz/Math.max(0.001,Math.sqrt(vx*vx+vy*vy+vz*vz));
+          const FLICK_RADIUS=13, FLICK_STRENGTH=0.10*Math.min(1,vMag/8);
+          const fx=pLast.x, fy=pLast.y, fz=pLast.z;
+          for (let i=0;i<N;i+=2) {
+            const j=i*3;
+            const dx=posArr[j]-fx, dy=posArr[j+1]-fy, dz=posArr[j+2]-fz;
+            const d2=dx*dx+dy*dy+dz*dz;
+            if (d2<FLICK_RADIUS*FLICK_RADIUS) {
+              const falloff=1-Math.sqrt(d2)/FLICK_RADIUS;
+              posArr[j]  +=ux*FLICK_STRENGTH*falloff;
+              posArr[j+1]+=uy*FLICK_STRENGTH*falloff;
+              posArr[j+2]+=uz*FLICK_STRENGTH*falloff;
+            }
+          }
+          geo.attributes.position.needsUpdate=true;
+          markAct();
+        }
       }
     };
     el.addEventListener("pointerdown",onDown);
@@ -1550,6 +1578,28 @@ export default function AetherCanvas() {
       // for this to accumulate or brighten over time the way the old trail
       // shader bug did — it only ever counts down.
       if (wells.length) {
+        // Prune expired wells first, in place.
+        for (let w=wells.length-1;w>=0;w--) if (now-wells[w].born>WELL_LIFE) wells.splice(w,1);
+
+        // Wells drift toward each other while both are alive — no new input
+        // gesture, purely emergent from spawning more than one at once. A
+        // fixed small step per frame scaled by both wells' remaining life
+        // fraction, so it fades exactly in step with everything else and
+        // never accumulates into a runaway drift.
+        if (wells.length>1) {
+          for (let a=0;a<wells.length;a++) {
+            for (let bI=a+1;bI<wells.length;bI++) {
+              const wa=wells[a], wb=wells[bI];
+              const la=Math.max(0,1-(now-wa.born)/WELL_LIFE), lb=Math.max(0,1-(now-wb.born)/WELL_LIFE);
+              const dx=wb.x-wa.x, dy=wb.y-wa.y, dz=wb.z-wa.z;
+              const dist=Math.max(0.5,Math.sqrt(dx*dx+dy*dy+dz*dz));
+              const drift=0.012*la*lb; // both must still be alive to feel the pull
+              wa.x+=dx/dist*drift; wa.y+=dy/dist*drift; wa.z+=dz/dist*drift;
+              wb.x-=dx/dist*drift; wb.y-=dy/dist*drift; wb.z-=dz/dist*drift;
+            }
+          }
+        }
+
         for (let w=wells.length-1;w>=0;w--) {
           const well=wells[w];
           const age=now-well.born;
