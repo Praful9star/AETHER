@@ -59,6 +59,28 @@ const FORM_LABELS: Record<FormType, string> = {
   protostar:  "PROTOSTELLAR DISK",
 };
 
+// Idle signature motion — each listed form breathes at its own rhythm instead
+// of sharing one generic wander. Pure multipliers on the existing safe wander
+// formula (frequency, amplitude), so the risk profile is identical to the
+// code they scale — no new accumulator, no new state. Forms not listed here
+// keep the original (1, 1) baseline behaviour, unchanged.
+const FORM_SIGNATURE: Partial<Record<FormType,{freqMul:number;ampMul:number}>> = {
+  barred:    {freqMul:0.65, ampMul:1.25}, // slow wide sway, like a bar oscillating
+  ring:      {freqMul:2.0,  ampMul:0.55}, // tight fast pulse, a heartbeat ring
+  vortex:    {freqMul:2.3,  ampMul:0.6},  // fast tight swirl
+  supernova: {freqMul:1.3,  ampMul:1.7},  // big violent breathing shell
+  sphere:    {freqMul:0.4,  ampMul:0.55}, // dense, nearly still cluster
+  void:      {freqMul:0.3,  ampMul:1.4},  // slow ghostly drift
+  pulsar:    {freqMul:3.0,  ampMul:0.4},  // sharp rhythmic ticks
+  accretion: {freqMul:1.8,  ampMul:0.45}, // fast tight disk shimmer
+  jellyfish: {freqMul:0.55, ampMul:1.3},  // slow undulating drift
+  magnetar:  {freqMul:2.5,  ampMul:1.1},  // erratic energetic field
+  plasma:    {freqMul:2.8,  ampMul:0.9},  // crackling arcs
+  protostar: {freqMul:0.6,  ampMul:0.8},  // gentle slow birth pulse
+  cymatics:  {freqMul:1.5,  ampMul:0.35}, // precise standing-wave stillness
+  lorenz:    {freqMul:1.9,  ampMul:1.2},  // chaotic never-settling
+};
+
 const FALLBACK_PALETTES: [string, string, string][] = [
   ["#050318", "#2d1b69", "#b892ff"],
   ["#150005", "#881133", "#ff4488"],
@@ -1260,6 +1282,7 @@ export default function AetherCanvas() {
 
     let energyCur=0.35,energyTgt=0.35,colorFrames=0,spin=0,burst=0;
     let currentTarget=forms.spiral;
+    let curFormName: FormType="spiral"; // drives the idle signature motion
     let saverArmed=false;
     let warp=0; // supernova pulse during form transitions
 
@@ -1329,6 +1352,7 @@ export default function AetherCanvas() {
     sceneRef.current={
       morph(pal:string[],fname:string,energy:number,spellWord?:string) {
         const f=FORMS.includes(fname as FormType)?(fname as FormType):"spiral";
+        curFormName=f;
         applyPalette(pal,colTgt); colorFrames=100;
         energyTgt=Math.max(0,Math.min(1,energy)); burst=Math.min(1,energy+0.35); coreMat.color.set(pal[2]);
         tintNebulae(pal);
@@ -1469,12 +1493,14 @@ export default function AetherCanvas() {
       // Sound-reactive: the galaxy physically pulses to its own soundscape
       const aLvl=spelling?0:(sceneRef.current.getAudioLevel?.()??0);
       // Particles calm down to hold the word legibly, then resume breathing
-      const amp=displayEnergy*8*(spelling?0.08:1)+aLvl*7;
+      const sig=FORM_SIGNATURE[curFormName];
+      const sigFreq=sig?.freqMul??1, sigAmp=sig?.ampMul??1;
+      const amp=(displayEnergy*8*(spelling?0.08:1)+aLvl*7)*sigAmp;
       // Framerate-independent convergence — same speed on 30fps phones and 144Hz displays
       const morphRate=spelling?5.4:2.4+warp*1.9;
       const morphK=1-Math.exp(-morphRate*dt);
       for (let i=0;i<N;i++) {
-        const j=i*3, spd=0.5+tArr[i]*0.4;
+        const j=i*3, spd=(0.5+tArr[i]*0.4)*sigFreq;
         base[j]  +=(currentTarget[j]  -base[j]  )*morphK;
         base[j+1]+=(currentTarget[j+1]-base[j+1])*morphK;
         base[j+2]+=(currentTarget[j+2]-base[j+2])*morphK;
