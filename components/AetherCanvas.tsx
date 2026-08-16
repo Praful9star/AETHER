@@ -1205,8 +1205,17 @@ export default function AetherCanvas() {
         const ny=-((downY-rect.top)/rect.height)*2+1;
         ray.setFromCamera({x:nx,y:ny} as THREE.Vector2,camera);
         const hits=ray.intersectObject(memPoints);
-        if (hits.length&&hits[0].index!==undefined&&hits[0].index<starsRef.current.length&&sceneRef.current.onStarTap)
+        if (hits.length&&hits[0].index!==undefined&&hits[0].index<starsRef.current.length&&sceneRef.current.onStarTap) {
           sceneRef.current.onStarTap(hits[0].index);
+        } else {
+          // Empty-space tap — drop a gravity well where the click lands.
+          gravRay.setFromCamera({x:nx,y:ny} as THREE.Vector2,camera);
+          if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
+            if (wells.length>=MAX_WELLS) wells.shift();
+            wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now()});
+            markAct();
+          }
+        }
       }
     };
     el.addEventListener("pointerdown",onDown);
@@ -1238,6 +1247,14 @@ export default function AetherCanvas() {
     let currentTarget=forms.spiral;
     let saverArmed=false;
     let warp=0; // supernova pulse during form transitions
+
+    // Click-to-spawn gravity wells — tap empty space to drop a temporary
+    // black hole that pulls nearby stars into orbit before releasing them.
+    // Lifespan is fixed at spawn time, so total pull strength can never
+    // accumulate or run away — it only ever counts down to zero.
+    const WELL_LIFE=3200, WELL_RADIUS=16, MAX_WELLS=4;
+    type Well={x:number,y:number,z:number,born:number};
+    const wells: Well[]=[];
 
     // Text-to-stars: whisper's key word spelled by all particles, then detonated
     const textTarget=new Float32Array(N*3);
@@ -1460,6 +1477,42 @@ export default function AetherCanvas() {
               posArr[j]  +=dx*k;
               posArr[j+1]+=dy*k;
               posArr[j+2]+=dz*k;
+            }
+          }
+        }
+      }
+
+      // Gravity wells — orbital pull (radial attract + tangential swirl) that
+      // fades out over a fixed lifespan. `env` is a pure function of age vs.
+      // life, always in [0,1] by construction (clamped), so there is no path
+      // for this to accumulate or brighten over time the way the old trail
+      // shader bug did — it only ever counts down.
+      if (wells.length) {
+        for (let w=wells.length-1;w>=0;w--) {
+          const well=wells[w];
+          const age=now-well.born;
+          if (age>WELL_LIFE) { wells.splice(w,1); continue; }
+          const tNorm=age/WELL_LIFE;
+          // Quick attack, slow release — snaps in, drifts apart at the end.
+          const env=Math.max(0,Math.min(1, tNorm<0.12 ? tNorm/0.12 : 1-((tNorm-0.12)/0.88) ));
+          const pull=0.0026*env, swirl=0.0016*env;
+          const wx=well.x, wy=well.y, wz=well.z;
+          for (let i=0;i<N;i+=2) {
+            const j=i*3;
+            const dx=wx-posArr[j], dy=wy-posArr[j+1], dz=wz-posArr[j+2];
+            const d2=dx*dx+dy*dy+dz*dz;
+            if (d2<WELL_RADIUS*WELL_RADIUS&&d2>0.04) {
+              const dist=Math.sqrt(d2);
+              const falloff=1-dist/WELL_RADIUS;
+              const k=pull*falloff;
+              posArr[j]  +=dx*k;
+              posArr[j+1]+=dy*k;
+              posArr[j+2]+=dz*k;
+              // Tangential component (around the well's local "up") for orbit,
+              // not just collapse straight into the point.
+              const sk=swirl*falloff;
+              posArr[j]  += dz*sk;
+              posArr[j+2]+= -dx*sk;
             }
           }
         }
