@@ -732,6 +732,30 @@ function makeAudio() {
   master.connect(analyser);
   const aData=new Uint8Array(analyser.frequencyBinCount);
 
+  // Algorithmic hall reverb — exponentially-decaying filtered noise as an
+  // impulse response, giving every note a sense of vast cosmic space
+  // without needing a sampled IR file.
+  const verb=ac.createConvolver();
+  const irLen=Math.floor(ac.sampleRate*3.2);
+  const irBuf=ac.createBuffer(2,irLen,ac.sampleRate);
+  for (let ch=0;ch<2;ch++) {
+    const d=irBuf.getChannelData(ch);
+    for (let i=0;i<irLen;i++) {
+      const decay=Math.pow(1-i/irLen,2.6);
+      d[i]=(Math.random()*2-1)*decay;
+    }
+  }
+  verb.buffer=irBuf;
+  const verbSend=ac.createGain(); verbSend.gain.value=0.22;
+  const verbOut=ac.createGain(); verbOut.gain.value=0.5;
+  master.connect(verbSend); verbSend.connect(verb); verb.connect(verbOut); verbOut.connect(ac.destination);
+
+  // Interaction SFX bus — spawned wells and flick releases get a dedicated
+  // send so they read as distinct events against the ambient pad, also
+  // routed through the same hall reverb for cohesion.
+  const sfxBus=ac.createGain(); sfxBus.gain.value=0.5;
+  sfxBus.connect(master); sfxBus.connect(verbSend);
+
   const nBuf=ac.createBuffer(1,2*ac.sampleRate,ac.sampleRate);
   const nData=nBuf.getChannelData(0); for (let i=0;i<nData.length;i++) nData[i]=Math.random()*2-1;
   const nSrc=ac.createBufferSource(); nSrc.buffer=nBuf; nSrc.loop=true;
@@ -763,10 +787,62 @@ function makeAudio() {
     src.connect(flt); flt.connect(g); g.connect(master); src.start(t); src.stop(t+dur+0.1);
   };
 
+  const sfxNote=(freq:number, type:OscillatorType, t:number, atk:number, dec:number, vol:number)=>{
+    const o=ac.createOscillator(); o.type=type; o.frequency.value=freq;
+    const g=ac.createGain();
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+atk); g.gain.exponentialRampToValueAtTime(0.0001,t+atk+dec);
+    o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t+atk+dec+0.1);
+  };
+  const sfxGlide=(f0:number, f1:number, type:OscillatorType, t:number, dur:number, vol:number)=>{
+    const o=ac.createOscillator(); o.type=type;
+    o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+dur);
+    const g=ac.createGain();
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+0.03); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t+dur+0.1);
+  };
+
   return {
     ac,
     on()  { if (ac.state==="suspended") ac.resume(); master.gain.setTargetAtTime(0.5,ac.currentTime,0.6); },
     off() { master.gain.setTargetAtTime(0,ac.currentTime,0.4); },
+
+    // A well spawning: attract wells get a warm rising swell, repel wells
+    // a sharp inverse-glide burst, so the two gestures read as opposites.
+    sfxWell(repel:boolean) {
+      if (ac.state==="suspended") ac.resume();
+      const t=ac.currentTime;
+      if (repel) {
+        sfxGlide(1400,140,"sawtooth",t,0.5,0.10);
+        const len=Math.ceil(ac.sampleRate*0.22);
+        const buf=ac.createBuffer(1,len,ac.sampleRate);
+        const d=buf.getChannelData(0); for (let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+        const src=ac.createBufferSource(); src.buffer=buf;
+        const flt=ac.createBiquadFilter(); flt.type="highpass"; flt.frequency.value=1200;
+        const g=ac.createGain(); g.gain.setValueAtTime(0.12,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.22);
+        src.connect(flt); flt.connect(g); g.connect(sfxBus); src.start(t); src.stop(t+0.3);
+      } else {
+        sfxGlide(220,660,"sine",t,0.6,0.09);
+        sfxNote(440,"sine",t+0.08,0.1,0.9,0.06);
+      }
+    },
+
+    // A flick release — a short filtered-noise whoosh scaled by impulse strength.
+    sfxFlick(strength:number) {
+      if (ac.state==="suspended") ac.resume();
+      const t=ac.currentTime;
+      const dur=0.3+strength*0.25;
+      const len=Math.ceil(ac.sampleRate*dur);
+      const buf=ac.createBuffer(1,len,ac.sampleRate);
+      const d=buf.getChannelData(0); for (let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+      const src=ac.createBufferSource(); src.buffer=buf;
+      const flt=ac.createBiquadFilter(); flt.type="bandpass";
+      flt.frequency.setValueAtTime(500+strength*1800,t);
+      flt.frequency.exponentialRampToValueAtTime(200,t+dur);
+      flt.Q.value=1.1;
+      const g=ac.createGain();
+      g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.05+strength*0.06,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+      src.connect(flt); flt.connect(g); g.connect(sfxBus); src.start(t); src.stop(t+dur+0.05);
+    },
     level() {
       analyser.getByteFrequencyData(aData);
       let s=0; for (let i=0;i<aData.length;i++) s+=aData[i];
@@ -1251,6 +1327,7 @@ export default function AetherCanvas() {
           if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
             if (wells.length>=MAX_WELLS) wells.shift();
             wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel:false});
+            audioRef.current?.sfxWell?.(false);
             markAct();
           }
         }
@@ -1263,6 +1340,7 @@ export default function AetherCanvas() {
         if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
           if (wells.length>=MAX_WELLS) wells.shift();
           wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel:true});
+          audioRef.current?.sfxWell?.(true);
           markAct();
         }
       } else if (moved>=8&&sculptPts.length>=2) {
@@ -1291,6 +1369,7 @@ export default function AetherCanvas() {
             }
           }
           geo.attributes.position.needsUpdate=true;
+          audioRef.current?.sfxFlick?.(Math.min(1,vMag/8));
           markAct();
         }
       }
@@ -1398,6 +1477,7 @@ export default function AetherCanvas() {
         if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
           if (wells.length>=MAX_WELLS) wells.shift();
           wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel});
+          audioRef.current?.sfxWell?.(repel);
           lastActRef.current=performance.now();
         }
       },
