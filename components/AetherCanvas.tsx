@@ -1390,6 +1390,17 @@ export default function AetherCanvas() {
     scene.add(dust);
 
     sceneRef.current={
+      spawnWell(repel:boolean) {
+        // Keyboard-triggered — same spawn path as a click/hold, just aimed
+        // at screen center instead of the cursor, so keyboard-only use gets
+        // the same interactivity as pointer use.
+        gravRay.setFromCamera({x:0,y:0} as THREE.Vector2,camera);
+        if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
+          if (wells.length>=MAX_WELLS) wells.shift();
+          wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel});
+          lastActRef.current=performance.now();
+        }
+      },
       morph(pal:string[],fname:string,energy:number,spellWord?:string) {
         const f=FORMS.includes(fname as FormType)?(fname as FormType):"spiral";
         curFormName=f;
@@ -2028,6 +2039,8 @@ export default function AetherCanvas() {
         case "e": case "E": setExplore(v=>!v); break;
         case "s": case "S": toggleSound(); break;
         case "c": case "C": capture(); break;
+        case "g": case "G": sceneRef.current?.spawnWell?.(false); break;
+        case "r": case "R": sceneRef.current?.spawnWell?.(true); break;
         case " ": e.preventDefault(); { const i=Math.floor(Math.random()*FORMS.length); exploreForm(FORMS[i],i); } break;
       }
     };
