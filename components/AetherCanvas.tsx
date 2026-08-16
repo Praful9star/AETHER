@@ -1236,7 +1236,8 @@ export default function AetherCanvas() {
     const onMouseLeave=()=>{ mouseRef.current.active=false; };
     const onUp=()=>{
       dragging=false;
-      if (moved<8&&performance.now()-downT<400) {
+      const heldMs=performance.now()-downT;
+      if (moved<8&&heldMs<400) {
         const rect=el.getBoundingClientRect();
         const nx=((downX-rect.left)/rect.width)*2-1;
         const ny=-((downY-rect.top)/rect.height)*2+1;
@@ -1245,13 +1246,24 @@ export default function AetherCanvas() {
         if (hits.length&&hits[0].index!==undefined&&hits[0].index<starsRef.current.length&&sceneRef.current.onStarTap) {
           sceneRef.current.onStarTap(hits[0].index);
         } else {
-          // Empty-space tap — drop a gravity well where the click lands.
+          // Empty-space tap — drop an attracting gravity well where the click lands.
           gravRay.setFromCamera({x:nx,y:ny} as THREE.Vector2,camera);
           if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
             if (wells.length>=MAX_WELLS) wells.shift();
-            wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now()});
+            wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel:false});
             markAct();
           }
+        }
+      } else if (moved<8&&heldMs>=HOLD_MS) {
+        // Held (not dragged) past the hold threshold — a repulsive shockwave well.
+        const rect=el.getBoundingClientRect();
+        const nx=((downX-rect.left)/rect.width)*2-1;
+        const ny=-((downY-rect.top)/rect.height)*2+1;
+        gravRay.setFromCamera({x:nx,y:ny} as THREE.Vector2,camera);
+        if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
+          if (wells.length>=MAX_WELLS) wells.shift();
+          wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel:true});
+          markAct();
         }
       }
     };
@@ -1290,8 +1302,8 @@ export default function AetherCanvas() {
     // black hole that pulls nearby stars into orbit before releasing them.
     // Lifespan is fixed at spawn time, so total pull strength can never
     // accumulate or run away — it only ever counts down to zero.
-    const WELL_LIFE=3200, WELL_RADIUS=16, MAX_WELLS=4;
-    type Well={x:number,y:number,z:number,born:number};
+    const WELL_LIFE=3200, WELL_RADIUS=16, MAX_WELLS=4, HOLD_MS=550;
+    type Well={x:number,y:number,z:number,born:number,repel:boolean};
     const wells: Well[]=[];
 
     // Drag-sculpt trail — dragging leaves a brief stirred streak of displaced
@@ -1545,7 +1557,12 @@ export default function AetherCanvas() {
           const tNorm=age/WELL_LIFE;
           // Quick attack, slow release — snaps in, drifts apart at the end.
           const env=Math.max(0,Math.min(1, tNorm<0.12 ? tNorm/0.12 : 1-((tNorm-0.12)/0.88) ));
-          const pull=0.0026*env, swirl=0.0016*env;
+          // Repulsive wells push instead of pull, hit a bit harder for shockwave
+          // punch, and skip the tangential swirl — a shockwave reads as pure
+          // radial force, not an orbit.
+          const sign=well.repel?-1:1;
+          const pull=(well.repel?0.0034:0.0026)*env*sign;
+          const swirl=well.repel?0:0.0016*env;
           const wx=well.x, wy=well.y, wz=well.z;
           for (let i=0;i<N;i+=2) {
             const j=i*3;
