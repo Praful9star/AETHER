@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useRef, useEffect, useState } from "react";
+import { motion, useScroll, useSpring, useTransform, MotionValue } from "framer-motion";
 
 const AetherCanvas = dynamic(() => import("./AetherCanvas"), { ssr: false });
 
@@ -401,6 +402,64 @@ function ConstellateCanvas({ color = "#44ddff" }: { color?: string }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  SCROLL-LINKED PARALLAX
+//  Wraps a panel so it drifts continuously with scroll position (not a
+//  triggered fade) — background layers moving at a different rate than the
+//  text around them is what actually reads as "depth" on scroll.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function ParallaxPanel({
+  children, range = 44, style,
+}: { children: React.ReactNode; range?: number; style?: React.CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({ target: ref, offset: ["start end", "end start"] });
+  const ySpring = useSpring(scrollYProgress, { stiffness: 90, damping: 24, mass: 0.4 });
+  const y = useTransform(ySpring, [0, 1], [range, -range]);
+  return (
+    <div ref={ref} style={{ ...style, overflow: "hidden" }}>
+      <motion.div style={{ y, height: "120%", marginTop: "-10%" }}>{children}</motion.div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  KINETIC TYPOGRAPHY
+//  Headline resolves left-to-right out of scrambled characters as it scrolls
+//  into view — reuses the page's existing IntersectionObserver `active` flag
+//  rather than owning a second observer.
+// ══════════════════════════════════════════════════════════════════════════════
+
+const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+function ScrambleText({ text, active }: { text: string; active: boolean }) {
+  const [display, setDisplay] = useState(text);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!active || startedRef.current) return;
+    startedRef.current = true;
+    const totalFrames = Math.max(28, Math.round(text.length * 1.8));
+    let frame = 0, raf = 0;
+    const tick = () => {
+      frame++;
+      const revealCount = Math.floor((frame / totalFrames) * text.length);
+      let out = "";
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        out += (c === " " || i < revealCount) ? c : SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
+      }
+      setDisplay(out);
+      if (frame < totalFrames) raf = requestAnimationFrame(tick);
+      else setDisplay(text);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active, text]);
+
+  return <>{display}</>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  DATA
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -522,8 +581,24 @@ export default function LandingPage() {
 
   const L = "1px solid rgba(150,130,230,0.1)";
 
+  // Whole-page scroll progress — smoothed with a spring so it reads as a
+  // fluid needle rather than a jittery 1:1 scrollbar clone.
+  const { scrollYProgress } = useScroll();
+  const progressWidth = useSpring(scrollYProgress, { stiffness: 120, damping: 26, mass: 0.3 });
+
   return (
     <>
+      {/* Scroll progress — thin luminous thread tracking descent through the cosmos */}
+      <motion.div
+        style={{
+          position: "fixed", top: 0, left: 0, right: 0, height: 2, zIndex: 950,
+          transformOrigin: "0% 50%", scaleX: progressWidth,
+          background: "linear-gradient(90deg, #b892ff, #ff88aa, #44ddff)",
+          boxShadow: "0 0 12px rgba(184,146,255,0.6)",
+          pointerEvents: "none",
+        }}
+      />
+
       {/* ─────────────────────────────────────────────────────────────────
           STICKY NAV
       ───────────────────────────────────────────────────────────────── */}
@@ -593,8 +668,8 @@ export default function LandingPage() {
             </div>
             <blockquote id="mani-q" data-reveal
               style={{ ...reveal("mani-q", 0.1), margin: "0 0 32px", padding: 0, color: "#f0ecff", fontSize: "clamp(22px, 3.4vw, 42px)", fontWeight: 200, fontFamily: "Georgia, 'Times New Roman', serif", fontStyle: "italic", lineHeight: 1.42, letterSpacing: "0.01em" }}>
-              "Every civilization has looked up and asked.<br />
-              Until now, none of them answered back."
+              "<ScrambleText text="Every civilization has looked up and asked." active={visible.has("mani-q")} /><br />
+              <ScrambleText text="Until now, none of them answered back." active={visible.has("mani-q")} />"
             </blockquote>
             <p id="mani-sub" data-reveal
               style={{ ...reveal("mani-sub", 0.2), margin: "0 0 44px", color: "rgba(200,196,235,0.45)", fontSize: "clamp(14px, 1.6vw, 16px)", lineHeight: 1.88, fontFamily: "Georgia, serif", fontStyle: "italic", maxWidth: 520 }}>
@@ -607,9 +682,9 @@ export default function LandingPage() {
               EXPLORE AETHER ↓
             </button>
           </div>
-          <div style={{ height: isMobile ? 300 : 500, position: "relative" }}>
+          <ParallaxPanel range={isMobile ? 20 : 46} style={{ height: isMobile ? 300 : 500, position: "relative" }}>
             <WireframeGlobe color="#b892ff" />
-          </div>
+          </ParallaxPanel>
         </div>
       </section>
 
@@ -687,12 +762,12 @@ export default function LandingPage() {
             borderTop: L,
           }}>
             {/* Canvas panel */}
-            <div style={{ width: isMobile ? "100%" : "44%", height: isMobile ? 260 : 380, position: "relative", overflow: "hidden", flexShrink: 0,
+            <ParallaxPanel range={28} style={{ width: isMobile ? "100%" : "44%", height: isMobile ? 260 : 380, position: "relative", flexShrink: 0,
               borderRight: !isMobile && i % 2 === 0 ? L : "none",
               borderLeft: !isMobile && i % 2 === 1 ? L : "none",
             }}>
               <f.Canvas />
-            </div>
+            </ParallaxPanel>
             {/* Text panel */}
             <div style={{ flex: 1, padding: isMobile ? "44px 28px" : "64px 72px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
               <div style={{ color: f.color, fontSize: 9, letterSpacing: "0.46em", marginBottom: 16, opacity: 0.6 }}>{f.n}</div>
@@ -776,9 +851,9 @@ export default function LandingPage() {
                 borderBottom: isMobile && i < 2 ? L : "none",
               }}>
                 {/* Mini canvas */}
-                <div style={{ height: 220, position: "relative", overflow: "hidden", borderBottom: L }}>
+                <ParallaxPanel range={18} style={{ height: 220, position: "relative", borderBottom: L }}>
                   <s.Canvas />
-                </div>
+                </ParallaxPanel>
                 {/* Text */}
                 <div style={{ padding: "44px 40px 52px" }}>
                   <div style={{ color: s.color, fontSize: "clamp(36px, 5vw, 56px)", fontWeight: 100, fontFamily: "Georgia, serif", lineHeight: 1, marginBottom: 20, opacity: 0.3, letterSpacing: "-0.02em" }}>
@@ -907,7 +982,7 @@ export default function LandingPage() {
             BEGIN
           </div>
           <div id="cta-word" data-reveal style={{ ...reveal("cta-word", 0.1), color: "#f0ecff", fontSize: "clamp(52px, 14vw, 148px)", fontWeight: 100, fontFamily: "Georgia, serif", letterSpacing: "0.14em", lineHeight: 1, textShadow: "0 0 100px rgba(184,146,255,0.22)", marginBottom: 22 }}>
-            ENTER
+            <ScrambleText text="ENTER" active={visible.has("cta-word")} />
           </div>
           <div id="cta-sub2" data-reveal style={{ ...reveal("cta-sub2", 0.18), color: "rgba(200,196,235,0.38)", fontSize: "clamp(10px, 1.6vw, 13px)", letterSpacing: "0.44em", marginBottom: 48 }}>
             THE COSMOS AWAITS

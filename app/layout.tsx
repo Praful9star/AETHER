@@ -60,8 +60,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased bg-[#050308] overflow-x-hidden">
-        {children}
+      <body className="antialiased bg-[#050308]">
+        {/*
+          Horizontal-overflow clipping lives on this inner wrapper, not on
+          <body> itself. A non-visible overflow value on <body> (hidden or
+          clip) forces the UA's overflow-x/overflow-y coupling rule to kick
+          in, which severs body's overflow propagation to the viewport —
+          the whole page stops scrolling. Keeping body's own overflow at
+          its default (visible) preserves normal scroll while this div
+          still clips anything that bleeds past the horizontal edge.
+        */}
+        <div style={{ overflowX: "clip" }}>{children}</div>
       </body>
     </html>
   );
