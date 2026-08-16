@@ -1189,6 +1189,21 @@ export default function AetherCanvas() {
       cam.theta-=(e.clientX-px)*0.005;
       cam.phi=Math.max(0.18,Math.min(Math.PI-0.18,cam.phi-(e.clientY-py)*0.005));
       px=e.clientX; py=e.clientY; cam.lastInput=performance.now(); markAct();
+
+      // Leave a sculpt point behind the drag, throttled so it doesn't spawn
+      // one per pixel of movement.
+      const nowMs=performance.now();
+      if (nowMs-lastSculptSpawn>=SCULPT_SPAWN_MS) {
+        const rect=el.getBoundingClientRect();
+        const nx=((e.clientX-rect.left)/rect.width)*2-1;
+        const ny=-((e.clientY-rect.top)/rect.height)*2+1;
+        gravRay.setFromCamera({x:nx,y:ny} as THREE.Vector2,camera);
+        if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
+          if (sculptPts.length>=MAX_SCULPT) sculptPts.shift();
+          sculptPts.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:nowMs});
+          lastSculptSpawn=nowMs;
+        }
+      }
     };
     const onMouseMove=(e:MouseEvent)=>{
       const rect=el.getBoundingClientRect();
@@ -1255,6 +1270,15 @@ export default function AetherCanvas() {
     const WELL_LIFE=3200, WELL_RADIUS=16, MAX_WELLS=4;
     type Well={x:number,y:number,z:number,born:number};
     const wells: Well[]=[];
+
+    // Drag-sculpt trail — dragging leaves a brief stirred streak of displaced
+    // stars behind the cursor, like fingers through dust. Same bounded-decay
+    // shape as the gravity wells: each point's own age is its only input, so
+    // there's nothing that can compound across frames.
+    const SCULPT_LIFE=750, SCULPT_RADIUS=9, MAX_SCULPT=14, SCULPT_SPAWN_MS=45;
+    type SculptPt={x:number,y:number,z:number,born:number};
+    const sculptPts: SculptPt[]=[];
+    let lastSculptSpawn=0;
 
     // Text-to-stars: whisper's key word spelled by all particles, then detonated
     const textTarget=new Float32Array(N*3);
@@ -1513,6 +1537,32 @@ export default function AetherCanvas() {
               const sk=swirl*falloff;
               posArr[j]  += dz*sk;
               posArr[j+2]+= -dx*sk;
+            }
+          }
+        }
+      }
+
+      // Drag-sculpt trail — gentle repel so dragging visibly stirs stars out
+      // of the cursor's path, each point fading independently and pruned the
+      // instant it's past its own fixed lifespan.
+      if (sculptPts.length) {
+        for (let s=sculptPts.length-1;s>=0;s--) {
+          const pt=sculptPts[s];
+          const age=now-pt.born;
+          if (age>SCULPT_LIFE) { sculptPts.splice(s,1); continue; }
+          const env=Math.max(0,1-age/SCULPT_LIFE);
+          const push=0.0022*env;
+          const sx=pt.x, sy=pt.y, sz=pt.z;
+          for (let i=0;i<N;i+=4) {
+            const j=i*3;
+            const dx=posArr[j]-sx, dy=posArr[j+1]-sy, dz=posArr[j+2]-sz;
+            const d2=dx*dx+dy*dy+dz*dz;
+            if (d2<SCULPT_RADIUS*SCULPT_RADIUS&&d2>0.04) {
+              const dist=Math.sqrt(d2);
+              const k=push*(1-dist/SCULPT_RADIUS);
+              posArr[j]  +=dx*k;
+              posArr[j+1]+=dy*k;
+              posArr[j+2]+=dz*k;
             }
           }
         }
