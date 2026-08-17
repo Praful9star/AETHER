@@ -23,7 +23,7 @@ const FORMS = [
   "polar_ring", "cartwheel", "starburst", "jellyfish", "shell",
   "accretion", "pulsar", "void", "magnetar", "einstein",
   "relic", "lorenz", "cymatics", "plasma", "protostar",
-  "torus", "helix",
+  "phyllotaxis", "mobius",
 ] as const;
 type FormType = (typeof FORMS)[number];
 
@@ -58,8 +58,8 @@ const FORM_LABELS: Record<FormType, string> = {
   cymatics:   "CHLADNI CYMATICS",
   plasma:     "PLASMA FILAMENT",
   protostar:  "PROTOSTELLAR DISK",
-  torus:      "TORUS RING GALAXY",
-  helix:      "DOUBLE HELIX NEBULA",
+  phyllotaxis: "PHYLLOTAXIS BLOOM",
+  mobius:      "MÖBIUS RING",
 };
 
 // Idle signature motion — each listed form breathes at its own rhythm instead
@@ -82,8 +82,8 @@ const FORM_SIGNATURE: Partial<Record<FormType,{freqMul:number;ampMul:number}>> =
   protostar: {freqMul:0.6,  ampMul:0.8},  // gentle slow birth pulse
   cymatics:  {freqMul:1.5,  ampMul:0.35}, // precise standing-wave stillness
   lorenz:    {freqMul:1.9,  ampMul:1.2},  // chaotic never-settling
-  torus:     {freqMul:0.85, ampMul:0.7},  // steady donut roll
-  helix:     {freqMul:1.4,  ampMul:0.65}, // twisting double-strand motion
+  phyllotaxis: {freqMul:0.5,  ampMul:0.5}, // slow blooming breath, seeds barely drift
+  mobius:      {freqMul:1.7,  ampMul:0.75}, // continuous twisting flow along the ribbon
 };
 
 const FALLBACK_PALETTES: [string, string, string][] = [
@@ -678,29 +678,38 @@ function genProtostar(arr: Float32Array, N: number) {
   }
 }
 
-function genTorus(arr: Float32Array, N: number) {
-  // Simple parametric torus — a donut of stars, tube thickness a third of the ring radius
-  const R=MAXR*0.55, r=MAXR*0.22;
+function genPhyllotaxis(arr: Float32Array, N: number) {
+  // Fibonacci phyllotaxis — the golden-angle sunflower-seed spiral behind
+  // real sunflowers, pinecones, and nautilus shells. Layered across a
+  // handful of gently offset planes so it reads as a 3D bloom with real
+  // depth instead of a flat disc.
+  const golden=Math.PI*(3-Math.sqrt(5)); // ≈137.5°, the golden angle
+  const layers=6;
+  const perLayer=Math.ceil(N/layers);
   for (let i=0;i<N;i++) {
-    const u=Math.random()*Math.PI*2, v=Math.random()*Math.PI*2;
-    const tube=r*(0.65+Math.random()*0.35);
-    arr[i*3]  =(R+tube*Math.cos(v))*Math.cos(u)+rn()*0.4;
-    arr[i*3+1]=tube*Math.sin(v)+rn()*0.4;
-    arr[i*3+2]=(R+tube*Math.cos(v))*Math.sin(u)+rn()*0.4;
+    const layer=i%layers;
+    const idx=Math.floor(i/layers);
+    const frac=idx/perLayer;
+    const r=Math.sqrt(frac)*MAXR*0.96;
+    const theta=idx*golden+layer*0.55;
+    const tilt=(layer-(layers-1)/2)*1.5;
+    arr[i*3]  =Math.cos(theta)*r+rn()*0.3;
+    arr[i*3+1]=tilt+Math.sin(frac*Math.PI)*3.2+rn()*0.3;
+    arr[i*3+2]=Math.sin(theta)*r+rn()*0.3;
   }
 }
 
-function genHelix(arr: Float32Array, N: number) {
-  // Two intertwined strands, alternating by index — a cosmic double helix
-  const turns=5, R=MAXR*0.48, H=MAXR*1.7;
+function genMobius(arr: Float32Array, N: number) {
+  // A Möbius strip — a ribbon of stars given a half-twist per loop so it
+  // has only one side and one edge. Distinctive, unmistakable silhouette
+  // from every angle as it rotates.
+  const R=MAXR*0.62, W=MAXR*0.36;
   for (let i=0;i<N;i++) {
-    const strand=i%2;
-    const t=i/N;
-    const ang=t*turns*Math.PI*2+(strand?Math.PI:0);
-    const y=(t-0.5)*H;
-    arr[i*3]  =Math.cos(ang)*R+rn()*0.4;
-    arr[i*3+1]=y+rn()*0.4;
-    arr[i*3+2]=Math.sin(ang)*R+rn()*0.4;
+    const u=Math.random()*Math.PI*2;
+    const v=(Math.random()*2-1)*W;
+    arr[i*3]  =(R+v*Math.cos(u/2))*Math.cos(u)+rn()*0.32;
+    arr[i*3+1]=v*Math.sin(u/2)+rn()*0.32;
+    arr[i*3+2]=(R+v*Math.cos(u/2))*Math.sin(u)+rn()*0.32;
   }
 }
 
@@ -737,8 +746,8 @@ function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array
     case "cymatics":   genCymatics(a, N); break;
     case "plasma":     genPlasma(a, N); break;
     case "protostar":  genProtostar(a, N); break;
-    case "torus":      genTorus(a, N); break;
-    case "helix":      genHelix(a, N); break;
+    case "phyllotaxis": genPhyllotaxis(a, N); break;
+    case "mobius":       genMobius(a, N); break;
   }
   return a;
 }
@@ -902,6 +911,33 @@ function makeAudio() {
     src.connect(flt); flt.connect(g); panOut(g,pan); src.start(t); src.stop(t+dur+0.1);
   };
 
+  // Generative pluck sequencer — a continuously evolving melodic line so
+  // the soundscape is never just a static drone waiting for the next
+  // transition. Each galaxy gets its own deterministic "key" (a pentatonic
+  // scale rooted at a hash of the form name), so switching forms feels
+  // like moving to a different piece of music rather than a filter sweep.
+  let currentScale=[220,261.6,293.7,329.6,392,440];
+  let seqOn=false;
+  const tPluck=(freq:number, t:number)=>{
+    const pan=nextPan();
+    const o=ac.createOscillator(); o.type="triangle"; o.frequency.value=freq;
+    const flt=ac.createBiquadFilter(); flt.type="lowpass"; flt.frequency.value=freq*3.4; flt.Q.value=1.1;
+    const g=ac.createGain();
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.055,t+0.008); g.gain.exponentialRampToValueAtTime(0.0001,t+1.5);
+    o.connect(flt); flt.connect(g); panOut(g,pan); g.connect(delay);
+    o.start(t); o.stop(t+1.6);
+  };
+  const scheduleSeq=()=>{
+    setTimeout(()=>{
+      if (seqOn) {
+        const f=currentScale[Math.floor(Math.random()*currentScale.length)]*(Math.random()<0.22?2:1);
+        tPluck(f,ac.currentTime);
+      }
+      scheduleSeq();
+    }, 480+Math.random()*420);
+  };
+  scheduleSeq();
+
   const panOutSfx=(node:AudioNode, pan:number)=>{
     if (!hasPanner) { node.connect(sfxBus); return; }
     const p=ac.createStereoPanner(); p.pan.value=Math.max(-1,Math.min(1,pan));
@@ -923,8 +959,8 @@ function makeAudio() {
 
   return {
     ac,
-    on()  { if (ac.state==="suspended") ac.resume(); master.gain.setTargetAtTime(0.5,ac.currentTime,0.6); },
-    off() { master.gain.setTargetAtTime(0,ac.currentTime,0.4); },
+    on()  { if (ac.state==="suspended") ac.resume(); master.gain.setTargetAtTime(0.5,ac.currentTime,0.6); seqOn=true; },
+    off() { master.gain.setTargetAtTime(0,ac.currentTime,0.4); seqOn=false; },
 
     // A well spawning: attract wells get a warm rising swell, repel wells
     // a sharp inverse-glide burst, so the two gestures read as opposites.
@@ -995,6 +1031,14 @@ function makeAudio() {
       const t=ac.currentTime;
       const v=0.038+energy*0.055;
 
+      // Each galaxy gets its own key for the generative sequencer — a
+      // minor-pentatonic scale rooted at a pitch deterministically hashed
+      // from the form's name, so switching forms changes what the ongoing
+      // melody is built from, not just the underlying drone filter.
+      let hash=0; for (let i=0;i<form.length;i++) hash=(hash*31+form.charCodeAt(i))>>>0;
+      const root=110*Math.pow(2,(hash%12)/12);
+      currentScale=[0,3,5,7,10,12,15].map(iv=>root*Math.pow(2,iv/12));
+
       const LP: Record<FormType,number> = {
         spiral:400+energy*900, barred:270, elliptical:120, ring:1900,
         merger:660, quasar:2500, supernova:1200, filament:1800,
@@ -1003,7 +1047,7 @@ function makeAudio() {
         polar_ring:1600, cartwheel:550, starburst:1800, jellyfish:200, shell:800,
         accretion:1400, pulsar:300, void:80, magnetar:2400, einstein:2200,
         relic:140, lorenz:600, cymatics:1800, plasma:1600, protostar:400,
-        torus:850, helix:1300,
+        phyllotaxis:1000, mobius:680,
       };
       const NF: Record<FormType,number> = {
         spiral:1100, barred:560, elliptical:150, ring:3400,
@@ -1013,7 +1057,7 @@ function makeAudio() {
         polar_ring:2400, cartwheel:800, starburst:6000, jellyfish:400, shell:1800,
         accretion:4000, pulsar:500, void:200, magnetar:8000, einstein:3600,
         relic:280, lorenz:1200, cymatics:3000, plasma:5000, protostar:1600,
-        torus:2000, helix:3200,
+        phyllotaxis:2600, mobius:1800,
       };
       lp.frequency.setTargetAtTime(LP[form],t,0.8);
       nFilt.frequency.setTargetAtTime(NF[form],t,0.5);
@@ -1157,17 +1201,21 @@ function makeAudio() {
           tGlide(82.4,110,"sine",t+0.3,3.0,v*0.7); tGlide(110,164.8,"sine",t+1.5,3.0,v*0.55);
           [261.6,329.6,392].forEach((f,i)=>tNote(f,"sine",t+2.5+i*0.3,0.4,3.5,v*0.45)); break;
 
-        case "torus":
-          // A steady rolling donut — a circular arpeggio that loops back on itself
-          [220,277.2,329.6,392,440,392,329.6,277.2].forEach((f,i)=>
-            tNote(f,"triangle",t+i*0.16,0.05,1.2,v*0.55));
-          tNote(110,"sine",t+0.5,0.3,3.5,v*0.6); break;
+        case "phyllotaxis": {
+          // A blooming spiral — an ascending run spaced by the Fibonacci
+          // sequence itself (in semitones), swelling outward like the
+          // seed-spiral it's built from.
+          const rt=130.8;
+          [1,2,3,5,8,13,21].forEach((step,i)=>
+            tNote(rt*Math.pow(2,step/12),"sine",t+i*0.13,0.09,2.6,v*(0.7-i*0.05)));
+          tGlide(rt*0.5,rt,"sine",t,3.0,v*0.5); break;
+        }
 
-        case "helix":
-          // Two intertwining melodic strands, offset like the visual strands
-          [196,246.9,293.7,349.2,392].forEach((f,i)=>tNote(f,"sine",t+i*0.18,0.06,2.2,v*0.55));
-          [220,277.2,329.6,392,440].forEach((f,i)=>tNote(f,"triangle",t+0.09+i*0.18,0.06,2.0,v*0.42));
-          tNote(98,"sine",t+0.4,0.4,3.2,v*0.5); break;
+        case "mobius":
+          // A ribbon that twists back on itself — two glides crossing in
+          // opposite directions, echoing the strip's single continuous edge.
+          tGlide(196,392,"triangle",t,2.2,v*0.55); tGlide(392,196,"sine",t+0.15,2.2,v*0.5);
+          tNote(98,"sine",t+0.6,0.3,3.0,v*0.55); break;
       }
     },
   };
