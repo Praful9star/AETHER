@@ -723,10 +723,48 @@ function makeAudio() {
   const lp=ac.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=420; lp.Q.value=2.5;
   const dOut=ac.createGain(); dOut.gain.value=0.18;
   lp.connect(dOut); dOut.connect(master);
-  [55,82.4,110].forEach(f => {
-    const o=ac.createOscillator(); o.type="sine"; o.frequency.value=f;
-    const g=ac.createGain(); g.gain.value=0.10; o.connect(g); g.connect(lp); o.start();
+
+  // Slow filter breathing — a gentle sine LFO riding on top of the
+  // per-form cutoff target, so the pad is never perfectly static even
+  // while holding one galaxy form.
+  const filterLFO=ac.createOscillator(); filterLFO.type="sine"; filterLFO.frequency.value=0.045;
+  const filterLFOGain=ac.createGain(); filterLFOGain.gain.value=55;
+  filterLFO.connect(filterLFOGain); filterLFOGain.connect(lp.frequency); filterLFO.start();
+
+  // Multi-voice cosmic drone — each base note gets two detuned twin voices
+  // for natural chorus beating (real analog pads are never a single pure
+  // tone), each with its own slow independent stereo-pan LFO so the whole
+  // bed breathes across the field instead of sitting dead-center.
+  const hasPanner=typeof ac.createStereoPanner==="function";
+  [55,82.4,110].forEach((f,vi) => {
+    [{cents:0,type:"sine" as OscillatorType,vol:0.10},{cents:-6,type:"triangle" as OscillatorType,vol:0.042},{cents:7,type:"triangle" as OscillatorType,vol:0.038}].forEach((voice,ci) => {
+      const o=ac.createOscillator(); o.type=voice.type; o.frequency.value=f; o.detune.value=voice.cents;
+      const g=ac.createGain(); g.gain.value=voice.vol;
+      let node: AudioNode=g;
+      if (hasPanner) {
+        const pan=ac.createStereoPanner();
+        const panLFO=ac.createOscillator(); panLFO.type="sine"; panLFO.frequency.value=0.028+vi*0.013+ci*0.007;
+        const panLFOGain=ac.createGain(); panLFOGain.gain.value=0.35+ci*0.15;
+        panLFO.connect(panLFOGain); panLFOGain.connect(pan.pan); panLFO.start();
+        g.connect(pan); node=pan;
+      }
+      o.connect(g); node.connect(lp); o.start();
+    });
   });
+
+  // Starlight shimmer — a very quiet high detuned pair with slow
+  // independent tremolo, the kind of faint high-end sparkle that reads
+  // as "cinematic space" without ever drawing attention to itself.
+  const shimmerGain=ac.createGain(); shimmerGain.gain.value=0.6;
+  [1760,2637].forEach((f,i) => {
+    const o=ac.createOscillator(); o.type="sine"; o.frequency.value=f; o.detune.value=i===0?-5:5;
+    const g=ac.createGain(); g.gain.value=0.014;
+    const trem=ac.createOscillator(); trem.type="sine"; trem.frequency.value=0.07+i*0.03;
+    const tremGain=ac.createGain(); tremGain.gain.value=0.010;
+    trem.connect(tremGain); tremGain.connect(g.gain); trem.start();
+    o.connect(g); g.connect(shimmerGain); o.start();
+  });
+  shimmerGain.connect(master);
   const analyser=ac.createAnalyser();
   analyser.fftSize=128; analyser.smoothingTimeConstant=0.78;
   master.connect(analyser);
@@ -753,8 +791,11 @@ function makeAudio() {
   // Interaction SFX bus — spawned wells and flick releases get a dedicated
   // send so they read as distinct events against the ambient pad, also
   // routed through the same hall reverb for cohesion.
+  // Reverb send for sfxBus goes through master (not verbSend directly) so
+  // interaction sounds stay properly silenced when sound is toggled off —
+  // master already forwards its full post-gain output to verbSend below.
   const sfxBus=ac.createGain(); sfxBus.gain.value=0.5;
-  sfxBus.connect(master); sfxBus.connect(verbSend);
+  sfxBus.connect(master);
 
   const nBuf=ac.createBuffer(1,2*ac.sampleRate,ac.sampleRate);
   const nData=nBuf.getChannelData(0); for (let i=0;i<nData.length;i++) nData[i]=Math.random()*2-1;
