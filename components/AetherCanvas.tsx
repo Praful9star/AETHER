@@ -826,6 +826,24 @@ function makeAudio() {
       }
     },
 
+    // A meteor detonating into the galaxy core — deep sub-bass thump under
+    // a broadband noise crack, the biggest single hit in the soundscape.
+    sfxImpact() {
+      if (ac.state==="suspended") ac.resume();
+      const t=ac.currentTime;
+      sfxGlide(120,32,"sine",t,0.9,0.22);
+      const len=Math.ceil(ac.sampleRate*0.5);
+      const buf=ac.createBuffer(1,len,ac.sampleRate);
+      const d=buf.getChannelData(0); for (let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+      const src=ac.createBufferSource(); src.buffer=buf;
+      const flt=ac.createBiquadFilter(); flt.type="lowpass";
+      flt.frequency.setValueAtTime(4200,t); flt.frequency.exponentialRampToValueAtTime(300,t+0.5);
+      const g=ac.createGain();
+      g.gain.setValueAtTime(0.16,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.5);
+      src.connect(flt); flt.connect(g); g.connect(sfxBus); src.start(t); src.stop(t+0.55);
+      [1046.5,1568,2093].forEach((f,i)=>sfxNote(f,"sine",t+0.1+i*0.05,0.02,1.6,0.03));
+    },
+
     // A flick release — a short filtered-noise whoosh scaled by impulse strength.
     sfxFlick(strength:number) {
       if (ac.state==="suspended") ac.resume();
@@ -1199,16 +1217,25 @@ export default function AetherCanvas() {
     const meteorMat=new THREE.LineBasicMaterial({color:0xcfd8ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false});
     const meteors=new THREE.LineSegments(meteorGeo,meteorMat);
     scene.add(meteors);
-    const meteorState=Array.from({length:METEORS},()=>({active:false,life:0,x:0,y:0,z:0,vx:0,vy:0,vz:0}));
+    const IMPACT_R=10;
+    const meteorState=Array.from({length:METEORS},()=>({active:false,life:0,x:0,y:0,z:0,vx:0,vy:0,vz:0,impactor:false,impacted:false}));
     let nextMeteor=performance.now()+4000+Math.random()*6000;
     const spawnMeteor=()=>{
       const m=meteorState.find(s=>!s.active); if (!m) return;
+      const impactor=Math.random()<0.35;
       const a=Math.random()*Math.PI*2, r=90+Math.random()*40;
-      m.x=Math.cos(a)*r; m.y=30+Math.random()*40; m.z=Math.sin(a)*r;
       const sp=55+Math.random()*45;
-      const ta=a+Math.PI+(Math.random()-0.5)*0.9;
-      m.vx=Math.cos(ta)*sp; m.vy=-(14+Math.random()*22); m.vz=Math.sin(ta)*sp;
-      m.life=1; m.active=true;
+      if (impactor) {
+        // Tightly aimed and low — reliably crosses near the galaxy core.
+        m.x=Math.cos(a)*r; m.y=4+Math.random()*10; m.z=Math.sin(a)*r;
+        const ta=a+Math.PI+(Math.random()-0.5)*0.16;
+        m.vx=Math.cos(ta)*sp; m.vy=-(6+Math.random()*8); m.vz=Math.sin(ta)*sp;
+      } else {
+        m.x=Math.cos(a)*r; m.y=30+Math.random()*40; m.z=Math.sin(a)*r;
+        const ta=a+Math.PI+(Math.random()-0.5)*0.9;
+        m.vx=Math.cos(ta)*sp; m.vy=-(14+Math.random()*22); m.vz=Math.sin(ta)*sp;
+      }
+      m.life=1; m.active=true; m.impactor=impactor; m.impacted=false;
     };
 
     // Nebula clouds — huge soft palette-tinted gas sprites drifting behind the galaxy
@@ -1787,6 +1814,17 @@ export default function AetherCanvas() {
         m.x+=m.vx*dt; m.y+=m.vy*dt; m.z+=m.vz*dt;
         m.life-=dt*0.55;
         if (m.life<=0) { m.active=false; meteorPos[j]=1e5; meteorPos[j+3]=1e5; return; }
+        if (m.impactor&&!m.impacted) {
+          const d2=m.x*m.x+m.y*m.y+m.z*m.z;
+          if (d2<IMPACT_R*IMPACT_R) {
+            m.impacted=true; m.active=false; meteorPos[j]=1e5; meteorPos[j+3]=1e5;
+            if (wells.length>=MAX_WELLS) wells.shift();
+            wells.push({x:m.x,y:m.y,z:m.z,born:now,repel:false});
+            burstRef.current=Math.max(burstRef.current,1.1);
+            audioRef.current?.sfxImpact?.();
+            return;
+          }
+        }
         const trail=0.09;
         meteorPos[j]  =m.x; meteorPos[j+1]=m.y; meteorPos[j+2]=m.z;
         meteorPos[j+3]=m.x-m.vx*trail; meteorPos[j+4]=m.y-m.vy*trail; meteorPos[j+5]=m.z-m.vz*trail;
