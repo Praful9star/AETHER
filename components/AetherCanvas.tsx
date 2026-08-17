@@ -23,6 +23,7 @@ const FORMS = [
   "polar_ring", "cartwheel", "starburst", "jellyfish", "shell",
   "accretion", "pulsar", "void", "magnetar", "einstein",
   "relic", "lorenz", "cymatics", "plasma", "protostar",
+  "torus", "helix",
 ] as const;
 type FormType = (typeof FORMS)[number];
 
@@ -57,6 +58,8 @@ const FORM_LABELS: Record<FormType, string> = {
   cymatics:   "CHLADNI CYMATICS",
   plasma:     "PLASMA FILAMENT",
   protostar:  "PROTOSTELLAR DISK",
+  torus:      "TORUS RING GALAXY",
+  helix:      "DOUBLE HELIX NEBULA",
 };
 
 // Idle signature motion — each listed form breathes at its own rhythm instead
@@ -79,6 +82,8 @@ const FORM_SIGNATURE: Partial<Record<FormType,{freqMul:number;ampMul:number}>> =
   protostar: {freqMul:0.6,  ampMul:0.8},  // gentle slow birth pulse
   cymatics:  {freqMul:1.5,  ampMul:0.35}, // precise standing-wave stillness
   lorenz:    {freqMul:1.9,  ampMul:1.2},  // chaotic never-settling
+  torus:     {freqMul:0.85, ampMul:0.7},  // steady donut roll
+  helix:     {freqMul:1.4,  ampMul:0.65}, // twisting double-strand motion
 };
 
 const FALLBACK_PALETTES: [string, string, string][] = [
@@ -673,6 +678,32 @@ function genProtostar(arr: Float32Array, N: number) {
   }
 }
 
+function genTorus(arr: Float32Array, N: number) {
+  // Simple parametric torus — a donut of stars, tube thickness a third of the ring radius
+  const R=MAXR*0.55, r=MAXR*0.22;
+  for (let i=0;i<N;i++) {
+    const u=Math.random()*Math.PI*2, v=Math.random()*Math.PI*2;
+    const tube=r*(0.65+Math.random()*0.35);
+    arr[i*3]  =(R+tube*Math.cos(v))*Math.cos(u)+rn()*0.4;
+    arr[i*3+1]=tube*Math.sin(v)+rn()*0.4;
+    arr[i*3+2]=(R+tube*Math.cos(v))*Math.sin(u)+rn()*0.4;
+  }
+}
+
+function genHelix(arr: Float32Array, N: number) {
+  // Two intertwined strands, alternating by index — a cosmic double helix
+  const turns=5, R=MAXR*0.48, H=MAXR*1.7;
+  for (let i=0;i<N;i++) {
+    const strand=i%2;
+    const t=i/N;
+    const ang=t*turns*Math.PI*2+(strand?Math.PI:0);
+    const y=(t-0.5)*H;
+    arr[i*3]  =Math.cos(ang)*R+rn()*0.4;
+    arr[i*3+1]=y+rn()*0.4;
+    arr[i*3+2]=Math.sin(ang)*R+rn()*0.4;
+  }
+}
+
 function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array {
   const a=new Float32Array(N*3);
   switch (name) {
@@ -706,6 +737,8 @@ function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array
     case "cymatics":   genCymatics(a, N); break;
     case "plasma":     genPlasma(a, N); break;
     case "protostar":  genProtostar(a, N); break;
+    case "torus":      genTorus(a, N); break;
+    case "helix":      genHelix(a, N); break;
   }
   return a;
 }
@@ -716,7 +749,29 @@ function makeAudio() {
   const Ctx=(window as any).AudioContext||(window as any).webkitAudioContext;
   if (!Ctx) return null;
   const ac=new Ctx() as AudioContext;
-  const master=ac.createGain(); master.gain.value=0; master.connect(ac.destination);
+  const master=ac.createGain(); master.gain.value=0;
+
+  // Master bus glue — without this, the overlapping voices in denser
+  // soundscapes (e.g. magnetar's five sawtooth notes plus two noise bursts
+  // at once) can sum past 0dB and hit the browser's hard clipper, which is
+  // what "shitty"/harsh actually sounds like. A gentle compressor plus a
+  // soft-saturation curve glues the mix together and keeps peaks in check;
+  // makeup gain restores the perceived loudness the compressor takes away.
+  const sat=ac.createWaveShaper();
+  { const n=1024, curve=new Float32Array(n);
+    for (let i=0;i<n;i++) { const x=(i/(n-1))*2-1; curve[i]=Math.tanh(x*1.4)/Math.tanh(1.4); }
+    sat.curve=curve; sat.oversample="2x"; }
+  const comp=ac.createDynamicsCompressor();
+  comp.threshold.value=-20; comp.knee.value=26; comp.ratio.value=3.2; comp.attack.value=0.007; comp.release.value=0.28;
+  const makeup=ac.createGain(); makeup.gain.value=1.25;
+  master.connect(sat); sat.connect(comp); comp.connect(makeup); makeup.connect(ac.destination);
+
+  // Auto-spread index — each melodic voice through tNote/tGlide/tNoise
+  // gets a slightly different stereo position so chords and arpeggios
+  // read as wide and produced instead of a mono pile-up.
+  const hasPanner=typeof ac.createStereoPanner==="function";
+  let panIdx=0;
+  const nextPan=()=>hasPanner?((((panIdx++)%7)-3)/3)*0.55:0;
   const delay=ac.createDelay(2.0); delay.delayTime.value=0.36;
   const fb=ac.createGain(); fb.gain.value=0.28;
   delay.connect(fb); fb.connect(delay); delay.connect(master);
@@ -735,7 +790,6 @@ function makeAudio() {
   // for natural chorus beating (real analog pads are never a single pure
   // tone), each with its own slow independent stereo-pan LFO so the whole
   // bed breathes across the field instead of sitting dead-center.
-  const hasPanner=typeof ac.createStereoPanner==="function";
   [55,82.4,110].forEach((f,vi) => {
     [{cents:0,type:"sine" as OscillatorType,vol:0.10},{cents:-6,type:"triangle" as OscillatorType,vol:0.042},{cents:7,type:"triangle" as OscillatorType,vol:0.038}].forEach((voice,ci) => {
       const o=ac.createOscillator(); o.type=voice.type; o.frequency.value=f; o.detune.value=voice.cents;
@@ -786,7 +840,7 @@ function makeAudio() {
   verb.buffer=irBuf;
   const verbSend=ac.createGain(); verbSend.gain.value=0.22;
   const verbOut=ac.createGain(); verbOut.gain.value=0.5;
-  master.connect(verbSend); verbSend.connect(verb); verb.connect(verbOut); verbOut.connect(ac.destination);
+  master.connect(verbSend); verbSend.connect(verb); verb.connect(verbOut); verbOut.connect(sat);
 
   // Interaction SFX bus — spawned wells and flick releases get a dedicated
   // send so they read as distinct events against the ambient pad, also
@@ -804,20 +858,40 @@ function makeAudio() {
   const nGain=ac.createGain(); nGain.gain.value=0.022;
   nSrc.connect(nFilt); nFilt.connect(nGain); nGain.connect(master); nSrc.start();
 
+  const panOut=(node:AudioNode, pan:number)=>{
+    if (!hasPanner) { node.connect(master); return; }
+    const p=ac.createStereoPanner(); p.pan.value=Math.max(-1,Math.min(1,pan));
+    node.connect(p); p.connect(master);
+  };
   const tNote=(freq:number, type:OscillatorType, t:number, atk:number, dec:number, vol:number)=>{
+    const pan=nextPan();
     const o=ac.createOscillator(); o.type=type; o.frequency.value=freq;
     const g=ac.createGain();
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+atk); g.gain.exponentialRampToValueAtTime(0.0001,t+atk+dec);
-    o.connect(g); g.connect(master); g.connect(delay); o.start(t); o.stop(t+atk+dec+0.1);
+    o.connect(g); panOut(g,pan); g.connect(delay); o.start(t); o.stop(t+atk+dec+0.1);
+    // Quiet detuned octave-up companion — the difference between a bare
+    // tone and one with a hint of overtone shimmer, panned to the opposite
+    // side for width.
+    const o2=ac.createOscillator(); o2.type=type; o2.frequency.value=freq*2; o2.detune.value=5;
+    const g2=ac.createGain();
+    g2.gain.setValueAtTime(0,t); g2.gain.linearRampToValueAtTime(vol*0.16,t+atk); g2.gain.exponentialRampToValueAtTime(0.0001,t+atk+dec*0.8);
+    o2.connect(g2); panOut(g2,-pan*0.7); o2.start(t); o2.stop(t+atk+dec*0.8+0.1);
   };
   const tGlide=(f0:number, f1:number, type:OscillatorType, t:number, dur:number, vol:number)=>{
+    const pan=nextPan();
     const o=ac.createOscillator(); o.type=type;
     o.frequency.setValueAtTime(f0,t); o.frequency.linearRampToValueAtTime(f1,t+dur);
     const g=ac.createGain();
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+0.04); g.gain.linearRampToValueAtTime(0,t+dur);
-    o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+0.1);
+    o.connect(g); panOut(g,pan); o.start(t); o.stop(t+dur+0.1);
+    const o2=ac.createOscillator(); o2.type=type; o2.detune.value=-6;
+    o2.frequency.setValueAtTime(f0*2,t); o2.frequency.linearRampToValueAtTime(f1*2,t+dur);
+    const g2=ac.createGain();
+    g2.gain.setValueAtTime(0,t); g2.gain.linearRampToValueAtTime(vol*0.14,t+0.04); g2.gain.linearRampToValueAtTime(0,t+dur);
+    o2.connect(g2); panOut(g2,-pan*0.7); o2.start(t); o2.stop(t+dur+0.1);
   };
   const tNoise=(t:number, dur:number, vol:number, freq:number)=>{
+    const pan=nextPan();
     const len=Math.ceil(ac.sampleRate*Math.max(0.05,dur));
     const buf=ac.createBuffer(1,len,ac.sampleRate);
     const d=buf.getChannelData(0); for (let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
@@ -825,21 +899,26 @@ function makeAudio() {
     const flt=ac.createBiquadFilter(); flt.type="bandpass"; flt.frequency.value=freq; flt.Q.value=2;
     const g=ac.createGain();
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    src.connect(flt); flt.connect(g); g.connect(master); src.start(t); src.stop(t+dur+0.1);
+    src.connect(flt); flt.connect(g); panOut(g,pan); src.start(t); src.stop(t+dur+0.1);
   };
 
-  const sfxNote=(freq:number, type:OscillatorType, t:number, atk:number, dec:number, vol:number)=>{
+  const panOutSfx=(node:AudioNode, pan:number)=>{
+    if (!hasPanner) { node.connect(sfxBus); return; }
+    const p=ac.createStereoPanner(); p.pan.value=Math.max(-1,Math.min(1,pan));
+    node.connect(p); p.connect(sfxBus);
+  };
+  const sfxNote=(freq:number, type:OscillatorType, t:number, atk:number, dec:number, vol:number, pan=0)=>{
     const o=ac.createOscillator(); o.type=type; o.frequency.value=freq;
     const g=ac.createGain();
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+atk); g.gain.exponentialRampToValueAtTime(0.0001,t+atk+dec);
-    o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t+atk+dec+0.1);
+    o.connect(g); panOutSfx(g,pan); o.start(t); o.stop(t+atk+dec+0.1);
   };
-  const sfxGlide=(f0:number, f1:number, type:OscillatorType, t:number, dur:number, vol:number)=>{
+  const sfxGlide=(f0:number, f1:number, type:OscillatorType, t:number, dur:number, vol:number, pan=0)=>{
     const o=ac.createOscillator(); o.type=type;
     o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+dur);
     const g=ac.createGain();
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+0.03); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t+dur+0.1);
+    o.connect(g); panOutSfx(g,pan); o.start(t); o.stop(t+dur+0.1);
   };
 
   return {
@@ -849,30 +928,33 @@ function makeAudio() {
 
     // A well spawning: attract wells get a warm rising swell, repel wells
     // a sharp inverse-glide burst, so the two gestures read as opposites.
-    sfxWell(repel:boolean) {
+    // pan ties the sound to where the well actually landed on screen —
+    // this is what makes interaction audio feel synced to the visuals
+    // instead of generic.
+    sfxWell(repel:boolean, pan=0) {
       if (ac.state==="suspended") ac.resume();
       const t=ac.currentTime;
       if (repel) {
-        sfxGlide(1400,140,"sawtooth",t,0.5,0.10);
+        sfxGlide(1400,140,"sawtooth",t,0.5,0.10,pan);
         const len=Math.ceil(ac.sampleRate*0.22);
         const buf=ac.createBuffer(1,len,ac.sampleRate);
         const d=buf.getChannelData(0); for (let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
         const src=ac.createBufferSource(); src.buffer=buf;
         const flt=ac.createBiquadFilter(); flt.type="highpass"; flt.frequency.value=1200;
         const g=ac.createGain(); g.gain.setValueAtTime(0.12,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.22);
-        src.connect(flt); flt.connect(g); g.connect(sfxBus); src.start(t); src.stop(t+0.3);
+        src.connect(flt); flt.connect(g); panOutSfx(g,pan); src.start(t); src.stop(t+0.3);
       } else {
-        sfxGlide(220,660,"sine",t,0.6,0.09);
-        sfxNote(440,"sine",t+0.08,0.1,0.9,0.06);
+        sfxGlide(220,660,"sine",t,0.6,0.09,pan);
+        sfxNote(440,"sine",t+0.08,0.1,0.9,0.06,pan);
       }
     },
 
     // A meteor detonating into the galaxy core — deep sub-bass thump under
     // a broadband noise crack, the biggest single hit in the soundscape.
-    sfxImpact() {
+    sfxImpact(pan=0) {
       if (ac.state==="suspended") ac.resume();
       const t=ac.currentTime;
-      sfxGlide(120,32,"sine",t,0.9,0.22);
+      sfxGlide(120,32,"sine",t,0.9,0.22,pan);
       const len=Math.ceil(ac.sampleRate*0.5);
       const buf=ac.createBuffer(1,len,ac.sampleRate);
       const d=buf.getChannelData(0); for (let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
@@ -881,12 +963,12 @@ function makeAudio() {
       flt.frequency.setValueAtTime(4200,t); flt.frequency.exponentialRampToValueAtTime(300,t+0.5);
       const g=ac.createGain();
       g.gain.setValueAtTime(0.16,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.5);
-      src.connect(flt); flt.connect(g); g.connect(sfxBus); src.start(t); src.stop(t+0.55);
-      [1046.5,1568,2093].forEach((f,i)=>sfxNote(f,"sine",t+0.1+i*0.05,0.02,1.6,0.03));
+      src.connect(flt); flt.connect(g); panOutSfx(g,pan); src.start(t); src.stop(t+0.55);
+      [1046.5,1568,2093].forEach((f,i)=>sfxNote(f,"sine",t+0.1+i*0.05,0.02,1.6,0.03,pan));
     },
 
     // A flick release — a short filtered-noise whoosh scaled by impulse strength.
-    sfxFlick(strength:number) {
+    sfxFlick(strength:number, pan=0) {
       if (ac.state==="suspended") ac.resume();
       const t=ac.currentTime;
       const dur=0.3+strength*0.25;
@@ -900,7 +982,7 @@ function makeAudio() {
       flt.Q.value=1.1;
       const g=ac.createGain();
       g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.05+strength*0.06,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-      src.connect(flt); flt.connect(g); g.connect(sfxBus); src.start(t); src.stop(t+dur+0.05);
+      src.connect(flt); flt.connect(g); panOutSfx(g,pan); src.start(t); src.stop(t+dur+0.05);
     },
     level() {
       analyser.getByteFrequencyData(aData);
@@ -921,6 +1003,7 @@ function makeAudio() {
         polar_ring:1600, cartwheel:550, starburst:1800, jellyfish:200, shell:800,
         accretion:1400, pulsar:300, void:80, magnetar:2400, einstein:2200,
         relic:140, lorenz:600, cymatics:1800, plasma:1600, protostar:400,
+        torus:850, helix:1300,
       };
       const NF: Record<FormType,number> = {
         spiral:1100, barred:560, elliptical:150, ring:3400,
@@ -930,6 +1013,7 @@ function makeAudio() {
         polar_ring:2400, cartwheel:800, starburst:6000, jellyfish:400, shell:1800,
         accretion:4000, pulsar:500, void:200, magnetar:8000, einstein:3600,
         relic:280, lorenz:1200, cymatics:3000, plasma:5000, protostar:1600,
+        torus:2000, helix:3200,
       };
       lp.frequency.setTargetAtTime(LP[form],t,0.8);
       nFilt.frequency.setTargetAtTime(NF[form],t,0.5);
@@ -1072,6 +1156,18 @@ function makeAudio() {
           tNoise(t,1.5,v*0.4,400); tNoise(t+0.5,1.2,v*0.3,800);
           tGlide(82.4,110,"sine",t+0.3,3.0,v*0.7); tGlide(110,164.8,"sine",t+1.5,3.0,v*0.55);
           [261.6,329.6,392].forEach((f,i)=>tNote(f,"sine",t+2.5+i*0.3,0.4,3.5,v*0.45)); break;
+
+        case "torus":
+          // A steady rolling donut — a circular arpeggio that loops back on itself
+          [220,277.2,329.6,392,440,392,329.6,277.2].forEach((f,i)=>
+            tNote(f,"triangle",t+i*0.16,0.05,1.2,v*0.55));
+          tNote(110,"sine",t+0.5,0.3,3.5,v*0.6); break;
+
+        case "helix":
+          // Two intertwining melodic strands, offset like the visual strands
+          [196,246.9,293.7,349.2,392].forEach((f,i)=>tNote(f,"sine",t+i*0.18,0.06,2.2,v*0.55));
+          [220,277.2,329.6,392,440].forEach((f,i)=>tNote(f,"triangle",t+0.09+i*0.18,0.06,2.0,v*0.42));
+          tNote(98,"sine",t+0.4,0.4,3.2,v*0.5); break;
       }
     },
   };
@@ -1395,7 +1491,7 @@ export default function AetherCanvas() {
           if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
             if (wells.length>=MAX_WELLS) wells.shift();
             wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel:false});
-            audioRef.current?.sfxWell?.(false);
+            audioRef.current?.sfxWell?.(false,gravTarget.x/16);
             markAct();
           }
         }
@@ -1408,7 +1504,7 @@ export default function AetherCanvas() {
         if (gravRay.ray.intersectPlane(gravPlane,gravTarget)) {
           if (wells.length>=MAX_WELLS) wells.shift();
           wells.push({x:gravTarget.x,y:gravTarget.y,z:gravTarget.z,born:performance.now(),repel:true});
-          audioRef.current?.sfxWell?.(true);
+          audioRef.current?.sfxWell?.(true,gravTarget.x/16);
           markAct();
         }
       } else if (moved>=8&&sculptPts.length>=2) {
@@ -1437,7 +1533,7 @@ export default function AetherCanvas() {
             }
           }
           geo.attributes.position.needsUpdate=true;
-          audioRef.current?.sfxFlick?.(Math.min(1,vMag/8));
+          audioRef.current?.sfxFlick?.(Math.min(1,vMag/8),fx/16);
           markAct();
         }
       }
@@ -1862,7 +1958,7 @@ export default function AetherCanvas() {
             if (wells.length>=MAX_WELLS) wells.shift();
             wells.push({x:m.x,y:m.y,z:m.z,born:now,repel:false});
             burstRef.current=Math.max(burstRef.current,1.1);
-            audioRef.current?.sfxImpact?.();
+            audioRef.current?.sfxImpact?.(m.x/16);
             return;
           }
         }
