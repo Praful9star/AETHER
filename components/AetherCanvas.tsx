@@ -86,6 +86,19 @@ const FORM_SIGNATURE: Partial<Record<FormType,{freqMul:number;ampMul:number}>> =
   mobius:      {freqMul:1.7,  ampMul:0.75}, // continuous twisting flow along the ribbon
 };
 
+// Transition violence — how hard a galaxy destabilizes when arriving at
+// this form, not while holding it. Defaults to 1 (the baseline turbulence
+// burst) for anything unlisted. Explosive/energetic forms tear themselves
+// apart on arrival; calm/dense ones drift into place almost without a
+// ripple — the transition itself should carry the same character as the
+// form it's building toward.
+const TRANSITION_VIOLENCE: Partial<Record<FormType,number>> = {
+  supernova: 2.0, quasar: 1.8, magnetar: 1.9, starburst: 1.7, cartwheel: 1.6,
+  merger: 1.5, plasma: 1.6, pulsar: 1.4,
+  void: 0.35, sphere: 0.4, relic: 0.4, cymatics: 0.3, elliptical: 0.5,
+  phyllotaxis: 0.45, protostar: 0.55,
+};
+
 const FALLBACK_PALETTES: [string, string, string][] = [
   ["#050318", "#2d1b69", "#b892ff"],
   ["#150005", "#881133", "#ff4488"],
@@ -773,7 +786,13 @@ function makeAudio() {
   const comp=ac.createDynamicsCompressor();
   comp.threshold.value=-20; comp.knee.value=26; comp.ratio.value=3.2; comp.attack.value=0.007; comp.release.value=0.28;
   const makeup=ac.createGain(); makeup.gain.value=1.25;
-  master.connect(sat); sat.connect(comp); comp.connect(makeup); makeup.connect(ac.destination);
+  // Duck bus — sits after saturation (so it catches both dry and reverb-wet
+  // signal, which converge at sat) and before the compressor. Used for a
+  // brief dip-and-recover the instant a galaxy transition begins: "the
+  // universe goes quiet, then resolves" rather than the new soundscape
+  // simply overlapping the old one.
+  const duckGain=ac.createGain(); duckGain.gain.value=1;
+  master.connect(sat); sat.connect(duckGain); duckGain.connect(comp); comp.connect(makeup); makeup.connect(ac.destination);
 
   // Auto-spread index — each melodic voice through tNote/tGlide/tNoise
   // gets a slightly different stereo position so chords and arpeggios
@@ -961,6 +980,17 @@ function makeAudio() {
     ac,
     on()  { if (ac.state==="suspended") ac.resume(); master.gain.setTargetAtTime(0.5,ac.currentTime,0.6); seqOn=true; },
     off() { master.gain.setTargetAtTime(0,ac.currentTime,0.4); seqOn=false; },
+
+    // A quick dip-and-recover on the whole mix, fired the instant a galaxy
+    // transition begins — silence as punctuation before the new
+    // soundscape resolves, not just one drone overlapping another.
+    duck() {
+      const t=ac.currentTime;
+      duckGain.gain.cancelScheduledValues(t);
+      duckGain.gain.setValueAtTime(duckGain.gain.value,t);
+      duckGain.gain.linearRampToValueAtTime(0.32,t+0.1);
+      duckGain.gain.linearRampToValueAtTime(1,t+0.6);
+    },
 
     // A well spawning: attract wells get a warm rising swell, repel wells
     // a sharp inverse-glide burst, so the two gestures read as opposites.
@@ -1705,6 +1735,7 @@ export default function AetherCanvas() {
           points.rotation.y=Math.PI/2-cam.theta; // face the viewer immediately
         } else {
           currentTarget=forms[f]; pendingForm=null; warp=1;
+          audioRef.current?.duck?.();
         }
       },
       rebuildStars(arr:SavedStar[]) {
@@ -1811,6 +1842,7 @@ export default function AetherCanvas() {
       if (pendingForm&&now>spellUntil) {
         currentTarget=pendingForm; pendingForm=null; warp=1;
         spin=points.rotation.y;
+        audioRef.current?.duck?.();
       }
       const spelling=pendingForm!==null;
       // Supernova pulse: expands mid-transition, swirls extra while warping
@@ -1842,15 +1874,22 @@ export default function AetherCanvas() {
       // Framerate-independent convergence — same speed on 30fps phones and 144Hz displays
       const morphRate=spelling?5.4:2.4+warp*1.9;
       const morphK=1-Math.exp(-morphRate*dt);
+      // Transition turbulence — a higher-frequency jitter riding on top of
+      // the normal wander, front-loaded at the start of a transition (warp
+      // starts at 1, decays to 0) and scaled per-form so an arrival at
+      // supernova/quasar/magnetar tears itself apart while an arrival at
+      // void/sphere/cymatics drifts into place almost without a ripple.
+      // The transition itself is meant to read as an event, not a crossfade.
+      const turb=spelling?0:warp*(TRANSITION_VIOLENCE[curFormName]??1)*2.4;
       for (let i=0;i<N;i++) {
         const j=i*3, spd=(0.5+tArr[i]*0.4)*sigFreq;
         base[j]  +=(currentTarget[j]  -base[j]  )*morphK;
         base[j+1]+=(currentTarget[j+1]-base[j+1])*morphK;
         base[j+2]+=(currentTarget[j+2]-base[j+2])*morphK;
         const ph=phase[i];
-        posArr[j]  =base[j]  *warpScale+Math.sin(t*spd      +ph      )*amp;
-        posArr[j+1]=base[j+1]*warpScale+Math.sin(t*spd*1.3  +ph*1.7  )*amp;
-        posArr[j+2]=base[j+2]*warpScale+Math.cos(t*spd*0.9  +ph      )*amp;
+        posArr[j]  =base[j]  *warpScale+Math.sin(t*spd      +ph      )*amp+Math.sin(t*spd*2.7+ph*3.1)*turb;
+        posArr[j+1]=base[j+1]*warpScale+Math.sin(t*spd*1.3  +ph*1.7  )*amp+Math.cos(t*spd*3.3+ph*2.3)*turb;
+        posArr[j+2]=base[j+2]*warpScale+Math.cos(t*spd*0.9  +ph      )*amp+Math.sin(t*spd*2.1+ph*4.0)*turb;
       }
 
       // Cursor gravity — particles attracted toward mouse world position
