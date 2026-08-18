@@ -401,6 +401,221 @@ function ConstellateCanvas({ color = "#44ddff" }: { color?: string }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  ACT COMPONENTS — demonstrated, not described
+// ══════════════════════════════════════════════════════════════════════════════
+
+/* ACT I — a quiet field of particles that gathers itself around whatever is typed */
+function WhisperField({ text }: { text: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const pullRef = useRef(0);
+  useEffect(() => { pullRef.current = Math.min(1, text.trim().length / 24); }, [text]);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    let raf = 0, t = 0, pull = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const resize = () => { el.width = el.clientWidth * dpr; el.height = el.clientHeight * dpr; };
+    resize();
+    window.addEventListener("resize", resize, { passive: true });
+    const ctx = el.getContext("2d")!;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const N = 160;
+    const pts = Array.from({ length: N }, (_, i) => ({
+      rx: Math.random(), ry: Math.random(),
+      gr: Math.sqrt(i / N), ga: i * golden,
+      phase: Math.random() * Math.PI * 2,
+    }));
+
+    const draw = () => {
+      const W = el.width, H = el.height, cx = W / 2, cy = H / 2, S = Math.min(W, H) * 0.42;
+      pull += (pullRef.current - pull) * 0.06;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#cfc6ff";
+      for (const p of pts) {
+        const scatterX = p.rx * W, scatterY = p.ry * H;
+        const gx = cx + Math.cos(p.ga) * p.gr * S, gy = cy + Math.sin(p.ga) * p.gr * S;
+        const x = scatterX + (gx - scatterX) * pull;
+        const y = scatterY + (gy - scatterY) * pull;
+        const tw = 0.35 + Math.sin(t * 0.6 + p.phase) * 0.2;
+        ctx.globalAlpha = (0.2 + pull * 0.5) * (tw + 0.5);
+        ctx.beginPath(); ctx.arc(x, y, 1 + pull * 0.6, 0, Math.PI * 2); ctx.fill();
+      }
+      if (pull > 0.04) {
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.5);
+        g.addColorStop(0, `rgba(184,146,255,${0.1 * pull})`); g.addColorStop(1, "transparent");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, S * 0.5, 0, Math.PI * 2); ctx.fill();
+      }
+      t += 0.016;
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+  return <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block" }} />;
+}
+
+/* ACT II — the 32 forms as a field of points, not a card grid */
+function FormsField({ onHover }: { onHover: (i: number | null) => void }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const hoverRef = useRef<number | null>(null);
+  const posRef = useRef<{ x: number; y: number }[]>([]);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    let raf = 0, t = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const resize = () => { el.width = el.clientWidth * dpr; el.height = el.clientHeight * dpr; };
+    resize();
+    window.addEventListener("resize", resize, { passive: true });
+    const ctx = el.getContext("2d")!;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const N = GALAXY_FORMS.length;
+
+    const move = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) * dpr, my = (e.clientY - rect.top) * dpr;
+      let best = -1, bestD = 26 * dpr;
+      posRef.current.forEach((p, i) => {
+        const d = Math.hypot(p.x - mx, p.y - my);
+        if (d < bestD) { bestD = d; best = i; }
+      });
+      if (hoverRef.current !== (best < 0 ? null : best)) {
+        hoverRef.current = best < 0 ? null : best;
+        onHover(hoverRef.current);
+      }
+    };
+    const leave = () => { hoverRef.current = null; onHover(null); };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerleave", leave);
+
+    const draw = () => {
+      const W = el.width, H = el.height, cx = W / 2, cy = H / 2, S = Math.min(W, H) * 0.46;
+      ctx.clearRect(0, 0, W, H);
+      posRef.current = [];
+      for (let i = 0; i < N; i++) {
+        const r = Math.sqrt((i + 0.5) / N) * S;
+        const a = i * golden + t * 0.02;
+        const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.62;
+        posRef.current.push({ x, y });
+        const active = hoverRef.current === i;
+        const c = GALAXY_FORMS[i].color;
+        ctx.fillStyle = c;
+        ctx.globalAlpha = active ? 1 : 0.42 + Math.sin(t * 0.5 + i) * 0.08;
+        if (active) { ctx.shadowColor = c; ctx.shadowBlur = 14 * dpr; }
+        ctx.beginPath(); ctx.arc(x, y, active ? 3.6 * dpr : 2 * dpr, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      t += 0.016;
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => {
+      cancelAnimationFrame(raf); window.removeEventListener("resize", resize);
+      el.removeEventListener("pointermove", move); el.removeEventListener("pointerleave", leave);
+    };
+  }, [onHover]);
+  return <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block", cursor: "crosshair" }} />;
+}
+
+/* ACT III — a waveform that only moves because the visitor's cursor moves */
+function SoundField() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const energyRef = useRef(0);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    let raf = 0, t = 0, lastX = -1, lastY = -1, energy = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const resize = () => { el.width = el.clientWidth * dpr; el.height = el.clientHeight * dpr; };
+    resize();
+    window.addEventListener("resize", resize, { passive: true });
+    const ctx = el.getContext("2d")!;
+    const move = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left, y = e.clientY - rect.top;
+      if (lastX >= 0) energyRef.current = Math.min(1, energyRef.current + Math.hypot(x - lastX, y - lastY) * 0.01);
+      lastX = x; lastY = y;
+    };
+    el.addEventListener("pointermove", move);
+
+    const LAYERS = [
+      { c: "#b892ff", f: 1.2, ph: 0 }, { c: "#44ddff", f: 2.1, ph: 1.4 }, { c: "#ff88aa", f: 0.7, ph: 2.6 },
+    ];
+    const draw = () => {
+      const W = el.width, H = el.height, cy = H / 2;
+      energy += (energyRef.current - energy) * 0.05;
+      energyRef.current = Math.max(0, energyRef.current - 0.006);
+      ctx.clearRect(0, 0, W, H);
+      LAYERS.forEach((l, i) => {
+        const amp = H * (0.03 + energy * 0.16) / (i + 1);
+        ctx.beginPath();
+        for (let x = 0; x <= W; x += 4) {
+          const n = x / W;
+          const y = cy + Math.sin(n * l.f * Math.PI * 8 + t * (1.4 + energy * 2) + l.ph) * amp * Math.sin(n * Math.PI);
+          x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = l.c; ctx.lineWidth = 1.4 * dpr; ctx.globalAlpha = 0.55 + energy * 0.35; ctx.stroke();
+      });
+      t += 0.014 + energy * 0.01;
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); el.removeEventListener("pointermove", move); };
+  }, []);
+  return <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block" }} />;
+}
+
+/* ACT IV — faint stars; one remembered */
+function MemoryField({ onSelect }: { onSelect: (i: number | null) => void }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const selRef = useRef<number | null>(null);
+  const travelRef = useRef(0);
+  const posRef = useRef<{ x: number; y: number }[]>([]);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    let raf = 0, t = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const resize = () => { el.width = el.clientWidth * dpr; el.height = el.clientHeight * dpr; };
+    resize();
+    window.addEventListener("resize", resize, { passive: true });
+    const ctx = el.getContext("2d")!;
+    const STARS = Array.from({ length: 22 }, () => ({
+      x: 0.08 + Math.random() * 0.84, y: 0.12 + Math.random() * 0.76,
+      r: 1 + Math.random() * 2, phase: Math.random() * Math.PI * 2,
+    }));
+
+    const click = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) / rect.width, my = (e.clientY - rect.top) / rect.height;
+      let best = -1, bestD = 0.055;
+      STARS.forEach((s, i) => { const d = Math.hypot(s.x - mx, s.y - my); if (d < bestD) { bestD = d; best = i; } });
+      selRef.current = best < 0 ? null : best;
+      onSelect(selRef.current);
+    };
+    el.addEventListener("pointerdown", click);
+
+    const draw = () => {
+      const W = el.width, H = el.height;
+      travelRef.current += ((selRef.current !== null ? 1 : 0) - travelRef.current) * 0.05;
+      ctx.clearRect(0, 0, W, H);
+      posRef.current = STARS.map(s => ({ x: s.x * W, y: s.y * H }));
+      STARS.forEach((s, i) => {
+        const selected = selRef.current === i;
+        const dim = selRef.current !== null && !selected;
+        const pulse = 1 + Math.sin(t * 0.9 + s.phase) * 0.3;
+        ctx.fillStyle = selected ? "#ffd9a8" : "#b892ff";
+        ctx.globalAlpha = dim ? 0.12 : selected ? 0.95 : 0.5 + Math.sin(t * 0.9 + s.phase) * 0.25;
+        if (selected) { ctx.shadowColor = "#ffd9a8"; ctx.shadowBlur = 16 * dpr; }
+        ctx.beginPath(); ctx.arc(s.x * W, s.y * H, (selected ? s.r * 1.8 : s.r) * pulse, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      });
+      t += 0.013;
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); el.removeEventListener("pointerdown", click); };
+  }, [onSelect]);
+  return <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block", cursor: "pointer" }} />;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  DATA
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -435,6 +650,8 @@ const GALAXY_FORMS = [
   { label: "CHLADNI CYMATICS",   color: "#ff88ff", theme: "Sound Made Visible · Hidden Order" },
   { label: "PLASMA FILAMENT",    color: "#ff4400", theme: "Electric · Branching · Alive" },
   { label: "PROTOSTELLAR DISK",  color: "#ffcc66", theme: "Beginning · Potential · A Sun Being Born" },
+  { label: "PHYLLOTAXIS BLOOM",  color: "#ffd966", theme: "Growth · Pattern · The Golden Angle" },
+  { label: "MÖBIUS RING",        color: "#66ffd9", theme: "Continuity · One Surface · No Beginning" },
 ];
 
 const PLANS = [
@@ -485,6 +702,9 @@ export default function LandingPage() {
   const [email,    setEmail]    = useState("");
   const [joined,   setJoined]   = useState(false);
   const [visible,  setVisible]  = useState<Set<string>>(new Set());
+  const [whisperText,   setWhisperText]   = useState("");
+  const [hoveredForm,   setHoveredForm]   = useState<number | null>(null);
+  const [selectedMemory, setSelectedMemory] = useState<number | null>(null);
 
   useEffect(() => {
     const check = () => {
@@ -571,7 +791,7 @@ export default function LandingPage() {
         <div style={{ display: "flex", animation: "aether-ticker-l 44s linear infinite", whiteSpace: "nowrap" }}>
           {[0, 1].map(k => (
             <span key={k} style={{ display: "inline-flex", alignItems: "center" }}>
-              {["40,000 PARTICLES", "30 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
+              {["40,000 PARTICLES", "32 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
                 <span key={item} style={{ color: "rgba(200,196,235,0.3)", fontSize: 9.5, letterSpacing: "0.38em", paddingRight: "3.5em", display: "inline-block" }}>
                   {item} <span style={{ color: "#b892ff55" }}>·</span>
                 </span>
@@ -614,93 +834,89 @@ export default function LandingPage() {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────────
-          SECTION 3 — STATS  (oversized editorial numbers)
+          SECTION 3 — DISCOVERY  (four acts, demonstrated not announced)
       ───────────────────────────────────────────────────────────────── */}
-      <section style={{ background: "#07030f", borderBottom: L, padding: isMobile ? "70px 28px" : "90px 64px" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 0 }}>
-            {([
-              { n: "40K",  label: "PARTICLES PER COSMOS", sub: "Rendered in real time at 60fps", color: "#b892ff", id: "stat-0" },
-              { n: "30",   label: "LIVING GALAXY FORMS",  sub: "Each with unique geometry and sound", color: "#ff88aa", id: "stat-1" },
-              { n: "∞",    label: "UNIQUE UNIVERSES",      sub: "No two thoughts produce the same sky", color: "#44ddff", id: "stat-2" },
-            ] as const).map(({ n, label, sub, color, id }, i) => (
-              <div key={id} id={id} data-reveal style={{
-                ...reveal(id, i * 0.14),
-                padding: isMobile ? "40px 0" : "52px 56px",
-                borderRight: !isMobile && i < 2 ? L : "none",
-                borderBottom: isMobile && i < 2 ? L : "none",
-                textAlign: "center",
-              }}>
-                <div style={{
-                  fontSize: "clamp(64px, 9.5vw, 112px)", fontWeight: 100,
-                  color, fontFamily: "Georgia, serif", lineHeight: 1,
-                  textShadow: `0 0 70px ${color}38`,
-                  marginBottom: 14, letterSpacing: "-0.02em",
-                }}>
-                  {n}
-                </div>
-                <div style={{ color: "rgba(200,196,235,0.44)", fontSize: 9.5, letterSpacing: "0.38em", marginBottom: 8 }}>{label}</div>
-                <div style={{ color: "rgba(200,196,235,0.28)", fontSize: 12, fontFamily: "Georgia, serif", fontStyle: "italic", lineHeight: 1.65 }}>{sub}</div>
-              </div>
-            ))}
+      <section style={{ background: "#050308", borderBottom: L }} id="feat-h2">
+
+        {/* ACT I — THE UNIVERSE LISTENS */}
+        <div id="act-1" data-reveal style={{ ...reveal("act-1"), maxWidth: 720, margin: "0 auto", padding: isMobile ? "120px 28px 60px" : "180px 64px 80px", textAlign: "center" }}>
+          <div style={{ height: isMobile ? 220 : 300, position: "relative", marginBottom: 36 }}>
+            <WhisperField text={whisperText} />
           </div>
-        </div>
-      </section>
-
-      {/* ─────────────────────────────────────────────────────────────────
-          SECTION 4 — FEATURE STRIPS  (alternating canvas ↔ text)
-      ───────────────────────────────────────────────────────────────── */}
-      <section style={{ background: "#050308", borderBottom: L }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", paddingTop: "90px" }}>
-          <div id="feat-eye" data-reveal style={{ ...reveal("feat-eye"), color: "rgba(184,146,255,0.44)", fontSize: 9.5, letterSpacing: "0.52em", paddingLeft: isMobile ? 28 : 64, marginBottom: 12 }}>CAPABILITIES</div>
-          <h2 id="feat-h2" data-reveal style={{ ...reveal("feat-h2", 0.1), color: "#f0ecff", fontSize: "clamp(28px, 4.5vw, 54px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", paddingLeft: isMobile ? 28 : 64, marginBottom: 72 }}>
-            What Aether can do
-          </h2>
-        </div>
-
-        {([
-          {
-            n: "01", title: "AI Cosmic Whispers", color: "#b892ff",
-            body: "Type any thought — joy, grief, wonder, or confusion. The AI reads your emotional signature and sculpts a galaxy from it. Every word becomes geometry.",
-            Canvas: () => <ConstellationNet color="#b892ff" />,
-          },
-          {
-            n: "02", title: "30 Living Galaxy Forms", color: "#ff88aa",
-            body: "Forty thousand particles reshape in real time between fifteen distinct cosmic structures — each carrying its own geometry, color palette, and meaning.",
-            Canvas: () => <OrbitRings />,
-          },
-          {
-            n: "03", title: "Spatial Soundscapes", color: "#44ddff",
-            body: "Each galaxy form triggers a unique sonic environment the moment it appears. Bell harmonics for ring galaxies. Sub-bass rumble for ellipticals. Noise chaos for vortices.",
-            Canvas: () => <AudioWaves />,
-          },
-          {
-            n: "04", title: "Your Constellation", color: "#ffcc44",
-            body: "Every thought becomes a permanent star plotted in 3D space. Tap any star to revisit that exact moment — that color, that form, that whisper. Your private universe grows.",
-            Canvas: () => <ConstellationNet color="#ffcc44" />,
-          },
-        ] as const).map((f, i) => (
-          <div key={f.n} id={`strip-${i}`} data-reveal style={{
-            ...reveal(`strip-${i}`, 0.08),
-            display: "flex",
-            flexDirection: isMobile ? "column" : (i % 2 === 0 ? "row" : "row-reverse"),
-            borderTop: L,
+          <input
+            value={whisperText}
+            onChange={e => setWhisperText(e.target.value)}
+            placeholder="whisper something…"
+            style={{
+              background: "none", border: "none", borderBottom: "1px solid rgba(184,146,255,0.25)",
+              color: "#eee9ff", fontSize: 16, fontFamily: "Georgia, serif", fontStyle: "italic",
+              textAlign: "center", padding: "8px 4px", outline: "none", width: "100%", maxWidth: 380,
+            }}
+          />
+          <p style={{
+            marginTop: 26, color: "rgba(200,196,235,0.4)", fontSize: 13.5, fontFamily: "Georgia, serif", fontStyle: "italic",
+            opacity: whisperText.trim().length > 0 ? 1 : 0, transition: "opacity 1.4s ease", minHeight: 20,
           }}>
-            {/* Canvas panel */}
-            <div style={{ width: isMobile ? "100%" : "44%", height: isMobile ? 260 : 380, position: "relative", overflow: "hidden", flexShrink: 0,
-              borderRight: !isMobile && i % 2 === 0 ? L : "none",
-              borderLeft: !isMobile && i % 2 === 1 ? L : "none",
+            A thought can become a universe.
+          </p>
+        </div>
+
+        {/* ACT II — 32 FORMS */}
+        <div id="act-2" data-reveal style={{ ...reveal("act-2"), borderTop: L, padding: isMobile ? "70px 28px" : "110px 64px", textAlign: "center", position: "relative" }}>
+          <div style={{ height: isMobile ? 320 : 460, position: "relative", maxWidth: 720, margin: "0 auto" }}>
+            <FormsField onHover={setHoveredForm} />
+            <div style={{
+              position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+              pointerEvents: "none", textAlign: "center", transition: "opacity 0.25s ease",
+              opacity: hoveredForm !== null ? 1 : 0,
             }}>
-              <f.Canvas />
-            </div>
-            {/* Text panel */}
-            <div style={{ flex: 1, padding: isMobile ? "44px 28px" : "64px 72px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-              <div style={{ color: f.color, fontSize: 9, letterSpacing: "0.46em", marginBottom: 16, opacity: 0.6 }}>{f.n}</div>
-              <h3 style={{ color: "#f0ecff", fontSize: "clamp(20px, 2.6vw, 34px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", marginBottom: 18, lineHeight: 1.3 }}>{f.title}</h3>
-              <p style={{ color: "rgba(200,196,235,0.5)", fontSize: 14.5, lineHeight: 1.86, fontFamily: "Georgia, serif", fontStyle: "italic", maxWidth: 460, margin: 0 }}>{f.body}</p>
+              {hoveredForm !== null && (
+                <>
+                  <div style={{ color: GALAXY_FORMS[hoveredForm].color, fontSize: 11, letterSpacing: "0.32em", marginBottom: 6, textShadow: `0 0 16px ${GALAXY_FORMS[hoveredForm].color}77` }}>
+                    {GALAXY_FORMS[hoveredForm].label}
+                  </div>
+                  <div style={{ color: "rgba(200,196,235,0.5)", fontSize: 12, fontFamily: "Georgia, serif", fontStyle: "italic" }}>
+                    {GALAXY_FORMS[hoveredForm].theme}
+                  </div>
+                </>
+              )}
             </div>
           </div>
-        ))}
+          <p style={{ marginTop: 8, color: "rgba(200,196,235,0.3)", fontSize: 12, fontFamily: "Georgia, serif", fontStyle: "italic" }}>
+            {isMobile ? "touch a point" : "move your cursor through the field"}
+          </p>
+        </div>
+
+        {/* ACT III — SOUND */}
+        <div id="act-3" data-reveal style={{ ...reveal("act-3"), borderTop: L, padding: isMobile ? "70px 28px" : "110px 64px", textAlign: "center" }}>
+          <div style={{ color: "rgba(184,146,255,0.4)", fontSize: 9.5, letterSpacing: "0.5em", marginBottom: 28 }}>LISTEN</div>
+          <div style={{ height: isMobile ? 160 : 200, position: "relative", maxWidth: 780, margin: "0 auto" }}>
+            <SoundField />
+          </div>
+          <p style={{ marginTop: 24, color: "rgba(200,196,235,0.34)", fontSize: 13, fontFamily: "Georgia, serif", fontStyle: "italic" }}>
+            the universe has a voice — move to hear it change
+          </p>
+        </div>
+
+        {/* ACT IV — MEMORY */}
+        <div id="act-4" data-reveal style={{ ...reveal("act-4"), borderTop: L, padding: isMobile ? "70px 28px" : "110px 64px", textAlign: "center" }}>
+          <div style={{ height: isMobile ? 260 : 340, position: "relative", maxWidth: 640, margin: "0 auto" }}>
+            <MemoryField onSelect={setSelectedMemory} />
+          </div>
+          <p style={{
+            marginTop: 20, color: "rgba(255,217,168,0.55)", fontSize: 14, fontFamily: "Georgia, serif", fontStyle: "italic",
+            opacity: selectedMemory !== null ? 1 : 0, transition: "opacity 1s ease", minHeight: 20,
+          }}>
+            Some things remain.
+          </p>
+        </div>
+
+        {/* Instrumentation — numbers as discovered metadata, not announced stats */}
+        <div style={{ borderTop: L, padding: "26px 28px", textAlign: "center", display: "flex", justifyContent: "center", gap: isMobile ? 16 : 32, flexWrap: "wrap" }}>
+          {["~40,000 PARTICLES", "32 FORMS", "REAL-TIME"].map(s => (
+            <span key={s} style={{ color: "rgba(200,196,235,0.24)", fontSize: 9, letterSpacing: "0.3em" }}>{s}</span>
+          ))}
+        </div>
       </section>
 
       {/* ─────────────────────────────────────────────────────────────────
