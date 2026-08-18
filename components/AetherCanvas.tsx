@@ -1490,7 +1490,11 @@ export default function AetherCanvas() {
     const memLines=new THREE.LineSegments(memLineGeo,memLineMat);
     scene.add(memLines);
 
-    const cam={theta:0.6,phi:1.15,radius:150,targetRadius:62,lastInput:performance.now()};
+    // Resting distance pulled in close so the galaxy is the dominant
+    // presence in the frame rather than a small blob adrift in empty
+    // space — the boot sequence still dollies in from radius:150, so the
+    // arrival reveal is now more dramatic, not less.
+    const cam={theta:0.6,phi:1.15,radius:150,targetRadius:38,lastInput:performance.now()};
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=()=>{
@@ -1627,10 +1631,23 @@ export default function AetherCanvas() {
     const onTM=(e:TouchEvent)=>{
       if (e.touches.length===2) {
         const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-        cam.targetRadius=Math.max(30,Math.min(120,cam.targetRadius-(d-pinchD)*0.25));
+        cam.targetRadius=Math.max(18,Math.min(120,cam.targetRadius-(d-pinchD)*0.25));
         pinchD=d; cam.lastInput=performance.now(); e.preventDefault();
       }
     };
+    // Desktop zoom — touch already had pinch-to-zoom, but desktop had no
+    // way to move through the field at all; the resting distance was the
+    // only distance. Gated to ctrl/cmd+wheel (which is also how browsers
+    // report trackpad pinch gestures) so a bare scroll still scrolls the
+    // page underneath the full-bleed hero canvas instead of getting
+    // trapped zooming the galaxy.
+    const onWheel=(e:WheelEvent)=>{
+      if (!e.ctrlKey&&!e.metaKey) return;
+      e.preventDefault();
+      cam.targetRadius=Math.max(18,Math.min(120,cam.targetRadius+e.deltaY*0.12));
+      cam.lastInput=performance.now();
+    };
+    el.addEventListener("wheel",onWheel,{passive:false});
     el.addEventListener("touchstart",onTS,{passive:false});
     el.addEventListener("touchmove",onTM,{passive:false});
 
@@ -2079,6 +2096,7 @@ export default function AetherCanvas() {
       el.removeEventListener("mouseleave",onMouseLeave);
       el.removeEventListener("touchstart",onTS);
       el.removeEventListener("touchmove",onTM);
+      el.removeEventListener("wheel",onWheel);
       geo.dispose(); mat.dispose(); sGeo.dispose(); sprite.dispose();
       (bgStars.material as THREE.Material).dispose();
       memGeo.dispose(); memMat.dispose(); memLineGeo.dispose(); memLineMat.dispose(); coreMat.dispose();
