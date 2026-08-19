@@ -1913,12 +1913,38 @@ export default function AetherCanvas() {
     let raf: number, lastT=performance.now();
     const posArr=geo.attributes.position.array as Float32Array;
 
+    // Adaptive quality — a silent, one-way safety net. Device capability
+    // varies wildly (integrated GPUs, throttled laptops, old phones); if
+    // the actual frame rate can't keep up with the full bloom/afterimage/
+    // high-DPR pipeline, step down once rather than let it stay janky for
+    // the rest of the session. No UI, no announcement — the experience
+    // should just quietly stay smooth.
+    let qualityStepped=false, qBloomMul=1;
+    let fpsFrames=0, fpsWindowStart=performance.now(), fpsChecks=0;
+    const maybeStepDownQuality=(now:number)=>{
+      fpsFrames++;
+      if (now-fpsWindowStart<2500) return;
+      const avgFps=fpsFrames/((now-fpsWindowStart)/1000);
+      fpsFrames=0; fpsWindowStart=now; fpsChecks++;
+      // Skip the very first window — page-load and shader compilation
+      // spikes make it an unreliable read of steady-state performance.
+      if (qualityStepped||fpsChecks<2) return;
+      if (avgFps<40) {
+        qualityStepped=true; qBloomMul=0.55;
+        afterimage.enabled=false;
+        renderer.setPixelRatio(1);
+        composer.setPixelRatio(1);
+        composer.setSize(mount!.clientWidth,mount!.clientHeight);
+      }
+    };
+
     const loop=()=>{
       raf=requestAnimationFrame(loop);
       const now=performance.now();
       const dt=Math.min(0.05,(now-lastT)/1000);
       lastT=now;
       const t=now/1000;
+      maybeStepDownQuality(now);
 
       // Screensaver idle check
       const idle=now-lastActRef.current;
@@ -2119,7 +2145,7 @@ export default function AetherCanvas() {
       matUniforms.uTime.value=t;
       // Tiny crisp particles while spelling so letterforms stay readable
       matUniforms.uSize.value=(0.9+displayEnergy*0.6+aLvl*0.5)*(spelling?0.42:1);
-      bloom.strength=spelling?0.2:0.3+displayEnergy*0.35+warp*0.35+aLvl*0.3;
+      bloom.strength=(spelling?0.2:0.3+displayEnergy*0.35+warp*0.35+aLvl*0.3)*qBloomMul;
       (afterimage.uniforms as any).damp.value=spelling?0.05:Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
       cinematic.uniforms.uTime.value=t;
       cinematic.uniforms.uWarp.value=Math.sin(warp*Math.PI);
