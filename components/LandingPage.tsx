@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 
 const AetherCanvas = dynamic(() => import("./AetherCanvas"), { ssr: false });
 
@@ -294,10 +294,12 @@ function WhisperField({ text }: { text: string }) {
 }
 
 /* ACT II — the 32 forms as a field of points, not a card grid */
-function FormsField({ onHover }: { onHover: (i: number | null) => void }) {
+function FormsField({ onHover, focusIndex = null }: { onHover: (i: number | null) => void; focusIndex?: number | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const hoverRef = useRef<number | null>(null);
+  const focusRef = useRef<number | null>(focusIndex);
   const posRef = useRef<{ x: number; y: number }[]>([]);
+  useEffect(() => { focusRef.current = focusIndex; if (focusIndex !== null) onHover(focusIndex); }, [focusIndex, onHover]);
   useEffect(() => {
     const el = ref.current; if (!el) return;
     let raf = 0, t = 0;
@@ -319,10 +321,10 @@ function FormsField({ onHover }: { onHover: (i: number | null) => void }) {
       });
       if (hoverRef.current !== (best < 0 ? null : best)) {
         hoverRef.current = best < 0 ? null : best;
-        onHover(hoverRef.current);
+        onHover(hoverRef.current ?? focusRef.current);
       }
     };
-    const leave = () => { hoverRef.current = null; onHover(null); };
+    const leave = () => { hoverRef.current = null; onHover(focusRef.current); };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerleave", leave);
 
@@ -330,12 +332,13 @@ function FormsField({ onHover }: { onHover: (i: number | null) => void }) {
       const W = el.width, H = el.height, cx = W / 2, cy = H / 2, S = Math.min(W, H) * 0.46;
       ctx.clearRect(0, 0, W, H);
       posRef.current = [];
+      const activeIdx = hoverRef.current ?? focusRef.current;
       for (let i = 0; i < N; i++) {
         const r = Math.sqrt((i + 0.5) / N) * S;
         const a = i * golden + t * 0.02;
         const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.62;
         posRef.current.push({ x, y });
-        const active = hoverRef.current === i;
+        const active = activeIdx === i;
         const c = GALAXY_FORMS[i].color;
         ctx.fillStyle = c;
         ctx.globalAlpha = active ? 1 : 0.42 + Math.sin(t * 0.5 + i) * 0.08;
@@ -403,11 +406,12 @@ function SoundField() {
 }
 
 /* ACT IV — faint stars; one remembered */
-function MemoryField({ onSelect }: { onSelect: (i: number | null) => void }) {
+function MemoryField({ onSelect, focusIndex = null }: { onSelect: (i: number | null) => void; focusIndex?: number | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const selRef = useRef<number | null>(null);
   const travelRef = useRef(0);
   const posRef = useRef<{ x: number; y: number }[]>([]);
+  useEffect(() => { if (focusIndex !== null) { selRef.current = focusIndex; onSelect(focusIndex); } }, [focusIndex, onSelect]);
   useEffect(() => {
     const el = ref.current; if (!el) return;
     let raf = 0, t = 0;
@@ -547,6 +551,27 @@ export default function LandingPage() {
   const [whisperText,   setWhisperText]   = useState("");
   const [hoveredForm,   setHoveredForm]   = useState<number | null>(null);
   const [selectedMemory, setSelectedMemory] = useState<number | null>(null);
+  const [kbFormIndex, setKbFormIndex] = useState<number | null>(null);
+  const [kbMemoryIndex, setKbMemoryIndex] = useState<number | null>(null);
+  const MEMORY_STAR_COUNT = 22; // must match MemoryField's internal STARS length
+
+  const onFormsKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const total = GALAXY_FORMS.length;
+    setKbFormIndex(cur => {
+      const base = cur ?? -1;
+      return (base + (e.key === "ArrowRight" ? 1 : -1) + total) % total;
+    });
+  }, []);
+  const onMemoryKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    setKbMemoryIndex(cur => {
+      const base = cur ?? -1;
+      return (base + (e.key === "ArrowRight" ? 1 : -1) + MEMORY_STAR_COUNT) % MEMORY_STAR_COUNT;
+    });
+  }, []);
 
   useEffect(() => {
     const check = () => {
@@ -736,8 +761,12 @@ export default function LandingPage() {
         {/* ACT II — 32 FORMS */}
         <div id="act-2" data-reveal style={{ ...reveal("act-2"), borderTop: L, padding: isMobile ? "70px 28px" : "110px 64px", textAlign: "center", position: "relative" }}>
           <div style={{ color: "rgba(255,136,170,0.4)", fontSize: 9.5, letterSpacing: "0.5em", marginBottom: 28 }}>TRANSFORM</div>
-          <div style={{ height: isMobile ? 320 : 460, position: "relative", maxWidth: 720, margin: "0 auto" }}>
-            <FormsField onHover={setHoveredForm} />
+          <div
+            role="listbox" aria-label="32 galaxy forms — use arrow keys to browse"
+            tabIndex={0} onKeyDown={onFormsKeyDown}
+            style={{ height: isMobile ? 320 : 460, position: "relative", maxWidth: 720, margin: "0 auto" }}
+          >
+            <FormsField onHover={setHoveredForm} focusIndex={kbFormIndex} />
             <div style={{
               position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
               pointerEvents: "none", textAlign: "center", transition: "opacity 0.25s ease",
@@ -774,8 +803,12 @@ export default function LandingPage() {
         {/* ACT IV — MEMORY */}
         <div id="act-4" data-reveal style={{ ...reveal("act-4"), borderTop: L, padding: isMobile ? "70px 28px" : "110px 64px", textAlign: "center" }}>
           <div style={{ color: "rgba(255,217,168,0.4)", fontSize: 9.5, letterSpacing: "0.5em", marginBottom: 28 }}>REMEMBER</div>
-          <div style={{ height: isMobile ? 260 : 340, position: "relative", maxWidth: 640, margin: "0 auto" }}>
-            <MemoryField onSelect={setSelectedMemory} />
+          <div
+            role="listbox" aria-label="saved memories — use arrow keys to browse"
+            tabIndex={0} onKeyDown={onMemoryKeyDown}
+            style={{ height: isMobile ? 260 : 340, position: "relative", maxWidth: 640, margin: "0 auto" }}
+          >
+            <MemoryField onSelect={setSelectedMemory} focusIndex={kbMemoryIndex} />
           </div>
           <p style={{
             marginTop: 20, color: "rgba(255,217,168,0.55)", fontSize: 14, fontFamily: "Georgia, serif", fontStyle: "italic",
