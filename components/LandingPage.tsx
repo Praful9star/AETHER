@@ -652,6 +652,8 @@ const GALAXY_FORMS = [
   { label: "PROTOSTELLAR DISK",  color: "#ffcc66", theme: "Beginning · Potential · A Sun Being Born" },
   { label: "PHYLLOTAXIS BLOOM",  color: "#ffd966", theme: "Growth · Pattern · The Golden Angle" },
   { label: "MÖBIUS RING",        color: "#66ffd9", theme: "Continuity · One Surface · No Beginning" },
+  { label: "TREFOIL KNOT",       color: "#c896ff", theme: "Entanglement · Return · No Beginning, No End" },
+  { label: "COSMIC DENDRITE",    color: "#7affb0", theme: "Growth · Branching · Emergence" },
 ];
 
 const PLANS = [
@@ -669,7 +671,7 @@ const PLANS = [
     cycle: "per month",
     color: "#ff88aa",
     featured: true,
-    items: ["Unlimited whispers", "120 saved stars", "All 30 galaxy forms", "Full spatial audio", "4K capture", "Priority AI", "Custom palettes"],
+    items: ["Unlimited whispers", "120 saved stars", "All 34 galaxy forms", "Full spatial audio", "4K capture", "Priority AI", "Custom palettes"],
     cta: "Go Cosmic →",
   },
   {
@@ -791,7 +793,7 @@ export default function LandingPage() {
         <div style={{ display: "flex", animation: "aether-ticker-l 44s linear infinite", whiteSpace: "nowrap" }}>
           {[0, 1].map(k => (
             <span key={k} style={{ display: "inline-flex", alignItems: "center" }}>
-              {["40,000 PARTICLES", "32 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
+              {["40,000 PARTICLES", "34 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
                 <span key={item} style={{ color: "rgba(200,196,235,0.3)", fontSize: 9.5, letterSpacing: "0.38em", paddingRight: "3.5em", display: "inline-block" }}>
                   {item} <span style={{ color: "#b892ff55" }}>·</span>
                 </span>
@@ -913,7 +915,7 @@ export default function LandingPage() {
 
         {/* Instrumentation — numbers as discovered metadata, not announced stats */}
         <div style={{ borderTop: L, padding: "26px 28px", textAlign: "center", display: "flex", justifyContent: "center", gap: isMobile ? 16 : 32, flexWrap: "wrap" }}>
-          {["~40,000 PARTICLES", "32 FORMS", "REAL-TIME"].map(s => (
+          {["~40,000 PARTICLES", "34 FORMS", "REAL-TIME"].map(s => (
             <span key={s} style={{ color: "rgba(200,196,235,0.24)", fontSize: 9, letterSpacing: "0.3em" }}>{s}</span>
           ))}
         </div>
@@ -927,7 +929,7 @@ export default function LandingPage() {
           GALAXY FORMS
         </div>
         <h2 id="forms-h2" data-reveal style={{ ...reveal("forms-h2", 0.08), color: "#f0ecff", fontSize: "clamp(24px, 4vw, 48px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", textAlign: "center", marginBottom: 52 }}>
-          30 Living Galaxy Forms
+          34 Living Galaxy Forms
         </h2>
 
         {/* Row 1 — left */}

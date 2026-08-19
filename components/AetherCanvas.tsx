@@ -23,7 +23,7 @@ const FORMS = [
   "polar_ring", "cartwheel", "starburst", "jellyfish", "shell",
   "accretion", "pulsar", "void", "magnetar", "einstein",
   "relic", "lorenz", "cymatics", "plasma", "protostar",
-  "phyllotaxis", "mobius",
+  "phyllotaxis", "mobius", "trefoil", "dendrite",
 ] as const;
 type FormType = (typeof FORMS)[number];
 
@@ -60,6 +60,8 @@ const FORM_LABELS: Record<FormType, string> = {
   protostar:  "PROTOSTELLAR DISK",
   phyllotaxis: "PHYLLOTAXIS BLOOM",
   mobius:      "MÖBIUS RING",
+  trefoil:     "TREFOIL KNOT",
+  dendrite:    "COSMIC DENDRITE",
 };
 
 // Idle signature motion — each listed form breathes at its own rhythm instead
@@ -84,6 +86,8 @@ const FORM_SIGNATURE: Partial<Record<FormType,{freqMul:number;ampMul:number}>> =
   lorenz:    {freqMul:1.9,  ampMul:1.2},  // chaotic never-settling
   phyllotaxis: {freqMul:0.5,  ampMul:0.5}, // slow blooming breath, seeds barely drift
   mobius:      {freqMul:1.7,  ampMul:0.75}, // continuous twisting flow along the ribbon
+  trefoil:     {freqMul:1.1,  ampMul:0.55}, // smooth, continuous, self-returning motion
+  dendrite:    {freqMul:2.1,  ampMul:0.5},  // fine branching jitter, never quite still
 };
 
 // Transition violence — how hard a galaxy destabilizes when arriving at
@@ -96,7 +100,7 @@ const TRANSITION_VIOLENCE: Partial<Record<FormType,number>> = {
   supernova: 2.0, quasar: 1.8, magnetar: 1.9, starburst: 1.7, cartwheel: 1.6,
   merger: 1.5, plasma: 1.6, pulsar: 1.4,
   void: 0.35, sphere: 0.4, relic: 0.4, cymatics: 0.3, elliptical: 0.5,
-  phyllotaxis: 0.45, protostar: 0.55,
+  phyllotaxis: 0.45, protostar: 0.55, trefoil: 0.5, dendrite: 1.3,
 };
 
 const FALLBACK_PALETTES: [string, string, string][] = [
@@ -726,6 +730,68 @@ function genMobius(arr: Float32Array, N: number) {
   }
 }
 
+function genTrefoil(arr: Float32Array, N: number) {
+  // A trefoil knot — the simplest true knot, three lobes woven through
+  // each other with no beginning or end. Distinct from the torus/mobius
+  // surfaces already in the set: this is a single closed curve, not a
+  // surface, so it reads as a much thinner, more delicate structure.
+  const R=MAXR*0.34, tube=MAXR*0.08;
+  for (let i=0;i<N;i++) {
+    const t=Math.random()*Math.PI*2;
+    const cx=Math.sin(t)+2*Math.sin(2*t);
+    const cy=Math.cos(t)-2*Math.cos(2*t);
+    const cz=-Math.sin(3*t);
+    const jitter=tube*(0.4+Math.random()*0.6);
+    const ja=Math.random()*Math.PI*2, jb=Math.random()*Math.PI*2;
+    arr[i*3]  =cx/3*R+Math.cos(ja)*jitter;
+    arr[i*3+1]=cz/3*R*0.9+Math.sin(ja)*Math.cos(jb)*jitter;
+    arr[i*3+2]=cy/3*R+Math.sin(ja)*Math.sin(jb)*jitter;
+  }
+}
+
+function genDendrite(arr: Float32Array, N: number) {
+  // A radiating fractal — several trunks from the core, each recursively
+  // forking outward at a shrinking scale. Reads as a cosmic tree/coral/
+  // neural structure from any viewing angle, since (unlike a grounded
+  // tree) it has no single "up" — trunks launch in random 3D directions.
+  const segs: {x0:number,y0:number,z0:number,x1:number,y1:number,z1:number,len:number}[]=[];
+  const grow=(x:number,y:number,z:number,theta:number,phi:number,len:number,gen:number)=>{
+    const x1=x+Math.sin(phi)*Math.cos(theta)*len;
+    const y1=y+Math.cos(phi)*len;
+    const z1=z+Math.sin(phi)*Math.sin(theta)*len;
+    segs.push({x0:x,y0:y,z0:z,x1,y1,z1,len:Math.hypot(x1-x,y1-y,z1-z)});
+    if (gen>=6||len<0.7) return;
+    const nBranches=2+Math.floor(Math.random()*2);
+    for (let i=0;i<nBranches;i++) {
+      grow(x1,y1,z1,
+        theta+(Math.random()-0.5)*1.3,
+        phi+(Math.random()-0.5)*1.1,
+        len*(0.66+Math.random()*0.14),
+        gen+1);
+    }
+  };
+  for (let k=0;k<6;k++) {
+    const theta=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+    grow(0,0,0,theta,phi,MAXR*0.34,0);
+  }
+  // Distribute particles along accumulated segment length via binary
+  // search on a cumulative-length table — O(N log segs), not O(N*segs),
+  // since all 32 forms are precomputed once at mount for N up to 40000.
+  const cum=new Float32Array(segs.length);
+  let acc=0;
+  for (let i=0;i<segs.length;i++) { acc+=segs[i].len; cum[i]=acc; }
+  const totalLen=acc||1;
+  for (let i=0;i<N;i++) {
+    const target=Math.random()*totalLen;
+    let lo=0, hi=segs.length-1;
+    while (lo<hi) { const mid=(lo+hi)>>1; if (cum[mid]<target) lo=mid+1; else hi=mid; }
+    const seg=segs[lo], tt=Math.random();
+    arr[i*3]  =seg.x0+(seg.x1-seg.x0)*tt+rn()*0.32;
+    arr[i*3+1]=seg.y0+(seg.y1-seg.y0)*tt+rn()*0.32;
+    arr[i*3+2]=seg.z0+(seg.z1-seg.z0)*tt+rn()*0.32;
+  }
+}
+
 function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array {
   const a=new Float32Array(N*3);
   switch (name) {
@@ -761,6 +827,8 @@ function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array
     case "protostar":  genProtostar(a, N); break;
     case "phyllotaxis": genPhyllotaxis(a, N); break;
     case "mobius":       genMobius(a, N); break;
+    case "trefoil":      genTrefoil(a, N); break;
+    case "dendrite":     genDendrite(a, N); break;
   }
   return a;
 }
@@ -1077,7 +1145,7 @@ function makeAudio() {
         polar_ring:1600, cartwheel:550, starburst:1800, jellyfish:200, shell:800,
         accretion:1400, pulsar:300, void:80, magnetar:2400, einstein:2200,
         relic:140, lorenz:600, cymatics:1800, plasma:1600, protostar:400,
-        phyllotaxis:1000, mobius:680,
+        phyllotaxis:1000, mobius:680, trefoil:750, dendrite:1400,
       };
       const NF: Record<FormType,number> = {
         spiral:1100, barred:560, elliptical:150, ring:3400,
@@ -1087,7 +1155,7 @@ function makeAudio() {
         polar_ring:2400, cartwheel:800, starburst:6000, jellyfish:400, shell:1800,
         accretion:4000, pulsar:500, void:200, magnetar:8000, einstein:3600,
         relic:280, lorenz:1200, cymatics:3000, plasma:5000, protostar:1600,
-        phyllotaxis:2600, mobius:1800,
+        phyllotaxis:2600, mobius:1800, trefoil:2100, dendrite:4200,
       };
       lp.frequency.setTargetAtTime(LP[form],t,0.8);
       nFilt.frequency.setTargetAtTime(NF[form],t,0.5);
@@ -1246,6 +1314,20 @@ function makeAudio() {
           // opposite directions, echoing the strip's single continuous edge.
           tGlide(196,392,"triangle",t,2.2,v*0.55); tGlide(392,196,"sine",t+0.15,2.2,v*0.5);
           tNote(98,"sine",t+0.6,0.3,3.0,v*0.55); break;
+
+        case "trefoil":
+          // A phrase that loops back to where it started — three lobes,
+          // three matching phrases, closing on the same note it opened on.
+          [261.6,329.6,392,329.6,261.6,196,261.6].forEach((f,i)=>
+            tNote(f,"sine",t+i*0.22,0.1,1.6,v*0.5));
+          tNote(130.8,"sine",t+0.3,0.5,3.0,v*0.5); break;
+
+        case "dendrite":
+          // A cascade of thinning branches — a burst of notes that forks
+          // and quiets as it spreads, like a tree finding its shape.
+          [0,0.1,0.16,0.24,0.29,0.36,0.4,0.46,0.51].forEach((dt2,i)=>
+            tNote(220*Math.pow(1.5,(i%4)),"triangle",t+dt2,0.015,0.6+Math.random()*0.5,v*(0.5-i*0.04)));
+          tNote(73.4,"sine",t,0.3,3.0,v*0.45); break;
       }
     },
   };
@@ -2480,7 +2562,7 @@ export default function AetherCanvas() {
         {([
           ["SOUND · "+(sound?"ON":"OFF"),toggleSound],
           ["STARS · "+count,()=>setPanel(p=>!p)],
-          ["EXPLORE · 30",()=>setExplore(e=>!e)],
+          ["EXPLORE · "+FORMS.length,()=>setExplore(e=>!e)],
           ["ZEN MODE",()=>setZen(true)],
           ["CAPTURE ✦",capture],
         ] as [string,()=>void][]).map(([label,fn])=>(
@@ -2604,7 +2686,7 @@ export default function AetherCanvas() {
               <button onClick={()=>setExplore(false)} style={{background:"none",border:"none",color:"rgba(220,216,255,.55)",fontSize:18,cursor:"pointer"}}>&times;</button>
             </div>
             <div style={{color:"rgba(200,196,235,.34)",fontSize:11,padding:"0 22px 12px",fontStyle:"italic",fontFamily:"Georgia, serif"}}>
-              30 living forms. Tap any to become it.
+              {FORMS.length} living forms. Tap any to become it.
             </div>
             <div style={{flex:1,overflowY:"auto",padding:"0 10px 16px"}}>
               {FORMS.map((f,i)=>{
