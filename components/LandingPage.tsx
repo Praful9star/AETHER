@@ -680,8 +680,38 @@ export default function LandingPage() {
       ───────────────────────────────────────────────────────────────── */}
       <section style={{ background: "#050308", borderBottom: L }} id="feat-h2">
 
+        {/* PROCESS STRIP — the map before the territory. A single restrained
+            line instead of a card grid: states the shape of the experience
+            up front, and doubles as real navigation (click a word, travel
+            to that Act) rather than being purely decorative. */}
+        <div id="how-strip" data-reveal style={{
+          ...reveal("how-strip"), display: "flex", alignItems: "center", justifyContent: "center",
+          gap: isMobile ? 10 : 22, flexWrap: "wrap", padding: isMobile ? "56px 24px 0" : "80px 64px 0",
+        }}>
+          {[
+            { label: "WHISPER",  id: "act-1", color: "#b892ff" },
+            { label: "TRANSFORM", id: "act-2", color: "#ff88aa" },
+            { label: "LISTEN",   id: "act-3", color: "#44ddff" },
+            { label: "REMEMBER", id: "act-4", color: "#ffd9a8" },
+          ].map((s, i, arr) => (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 22 }}>
+              <button onClick={() => scrollTo(s.id)} style={{
+                background: "none", border: "none", cursor: "pointer", padding: 0,
+                color: "rgba(200,196,235,0.4)", fontSize: isMobile ? 10 : 11, letterSpacing: "0.32em",
+                fontFamily: "'Helvetica Neue', Arial, sans-serif", transition: "color 0.35s ease",
+              }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = s.color; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "rgba(200,196,235,0.4)"; }}>
+                {s.label}
+              </button>
+              {i < arr.length - 1 && <span style={{ color: "rgba(184,146,255,0.22)", fontSize: 12 }}>—</span>}
+            </div>
+          ))}
+        </div>
+
         {/* ACT I — THE UNIVERSE LISTENS */}
         <div id="act-1" data-reveal style={{ ...reveal("act-1"), maxWidth: 720, margin: "0 auto", padding: isMobile ? "120px 28px 60px" : "180px 64px 80px", textAlign: "center" }}>
+          <div style={{ color: "rgba(184,146,255,0.4)", fontSize: 9.5, letterSpacing: "0.5em", marginBottom: 28 }}>WHISPER</div>
           <div style={{ height: isMobile ? 220 : 300, position: "relative", marginBottom: 36 }}>
             <WhisperField text={whisperText} />
           </div>
@@ -705,6 +735,7 @@ export default function LandingPage() {
 
         {/* ACT II — 32 FORMS */}
         <div id="act-2" data-reveal style={{ ...reveal("act-2"), borderTop: L, padding: isMobile ? "70px 28px" : "110px 64px", textAlign: "center", position: "relative" }}>
+          <div style={{ color: "rgba(255,136,170,0.4)", fontSize: 9.5, letterSpacing: "0.5em", marginBottom: 28 }}>TRANSFORM</div>
           <div style={{ height: isMobile ? 320 : 460, position: "relative", maxWidth: 720, margin: "0 auto" }}>
             <FormsField onHover={setHoveredForm} />
             <div style={{
@@ -742,6 +773,7 @@ export default function LandingPage() {
 
         {/* ACT IV — MEMORY */}
         <div id="act-4" data-reveal style={{ ...reveal("act-4"), borderTop: L, padding: isMobile ? "70px 28px" : "110px 64px", textAlign: "center" }}>
+          <div style={{ color: "rgba(255,217,168,0.4)", fontSize: 9.5, letterSpacing: "0.5em", marginBottom: 28 }}>REMEMBER</div>
           <div style={{ height: isMobile ? 260 : 340, position: "relative", maxWidth: 640, margin: "0 auto" }}>
             <MemoryField onSelect={setSelectedMemory} />
           </div>
