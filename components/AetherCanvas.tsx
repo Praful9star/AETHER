@@ -1579,7 +1579,7 @@ export default function AetherCanvas() {
     const cam={theta:0.6,phi:1.15,radius:150,targetRadius:38,lastInput:performance.now()};
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
-    const updateCam=()=>{
+    const updateCam=(now:number)=>{
       const gyro=gyroRef.current;
       const gyroTheta=gyro.gamma*(Math.PI/180)*0.04;
       const gyroPhi=gyro.beta*(Math.PI/180)*0.03;
@@ -1588,10 +1588,20 @@ export default function AetherCanvas() {
       const ty=m.active&&!dragging?m.y*0.10:0;
       parX+=(tx-parX)*0.045; parY+=(ty-parY)*0.045;
       const ph=Math.max(0.14,Math.min(Math.PI-0.14,cam.phi+gyroPhi-parY));
+      // Cinematic idle breath — a slow, gentle scale reveal that only
+      // stirs after several seconds of no input, easing in smoothly and
+      // reverting instantly (via the same idle timer, no separate state)
+      // the moment the user touches the camera again. Multiplies the
+      // already-smoothed radius rather than cam.targetRadius, so it can
+      // never fight or overwrite the user's actual zoom preference.
+      const idleMs=Math.max(0,now-cam.lastInput-6000);
+      const breathFade=Math.min(1,idleMs/3000);
+      const breath=1+Math.sin(idleMs*0.00025)*0.22*breathFade;
+      const effRadius=cam.radius*breath;
       camera.position.set(
-        cam.radius*Math.sin(ph)*Math.cos(cam.theta+gyroTheta+parX),
-        cam.radius*Math.cos(ph),
-        cam.radius*Math.sin(ph)*Math.sin(cam.theta+gyroTheta+parX),
+        effRadius*Math.sin(ph)*Math.cos(cam.theta+gyroTheta+parX),
+        effRadius*Math.cos(ph),
+        effRadius*Math.sin(ph)*Math.sin(cam.theta+gyroTheta+parX),
       );
       camera.lookAt(0,0,0);
     };
@@ -1958,7 +1968,7 @@ export default function AetherCanvas() {
       // Screensaver: faster auto-rotate
       const rotSpeed=saverArmed?0.18:0.04;
       if (!dragging&&now-cam.lastInput>2500) cam.theta+=rotSpeed*dt;
-      updateCam();
+      updateCam(now);
 
       energyCur+=(energyTgt-energyCur)*(1-Math.exp(-1.5*dt));
       const displayEnergy=Math.max(energyCur,burst);
