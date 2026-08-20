@@ -1594,7 +1594,7 @@ export default function AetherCanvas() {
       // the moment the user touches the camera again. Multiplies the
       // already-smoothed radius rather than cam.targetRadius, so it can
       // never fight or overwrite the user's actual zoom preference.
-      const idleMs=Math.max(0,now-cam.lastInput-6000);
+      const idleMs=reducedMotion?0:Math.max(0,now-cam.lastInput-6000);
       const breathFade=Math.min(1,idleMs/3000);
       const breath=1+Math.sin(idleMs*0.00025)*0.22*breathFade;
       const effRadius=cam.radius*breath;
@@ -1755,6 +1755,17 @@ export default function AetherCanvas() {
     let curFormName: FormType="spiral"; // drives the idle signature motion
     let saverArmed=false;
     let warp=0; // supernova pulse during form transitions
+
+    // Reduced motion — a thoughtful mode removes the purely-ambient,
+    // non-user-driven continuous drift (auto-rotate, the idle camera
+    // breath) without gutting the product's identity: form transitions,
+    // drag-orbit, and everything the user directly triggers still work
+    // exactly as normal. Live-updated in case the OS setting changes
+    // mid-session.
+    const motionMQ=typeof window!=="undefined"?window.matchMedia?.("(prefers-reduced-motion: reduce)"):null;
+    let reducedMotion=motionMQ?.matches??false;
+    const onMotionChange=(e:MediaQueryListEvent)=>{ reducedMotion=e.matches; };
+    motionMQ?.addEventListener?.("change",onMotionChange);
 
     // Click-to-spawn gravity wells — tap empty space to drop a temporary
     // black hole that pulls nearby stars into orbit before releasing them.
@@ -1967,7 +1978,7 @@ export default function AetherCanvas() {
       cam.radius+=(cam.targetRadius-cam.radius)*(1-Math.exp(-2.8*dt));
       // Screensaver: faster auto-rotate
       const rotSpeed=saverArmed?0.18:0.04;
-      if (!dragging&&now-cam.lastInput>2500) cam.theta+=rotSpeed*dt;
+      if (!dragging&&!reducedMotion&&now-cam.lastInput>2500) cam.theta+=rotSpeed*dt;
       updateCam(now);
 
       energyCur+=(energyTgt-energyCur)*(1-Math.exp(-1.5*dt));
@@ -2209,6 +2220,7 @@ export default function AetherCanvas() {
       window.removeEventListener("pointerup",onUp);
       window.removeEventListener("keydown",markAct);
       window.removeEventListener("deviceorientation",onDeviceOrientation);
+      motionMQ?.removeEventListener?.("change",onMotionChange);
       el.removeEventListener("pointerdown",onDown);
       el.removeEventListener("mousemove",onMouseMove);
       el.removeEventListener("mouseleave",onMouseLeave);
