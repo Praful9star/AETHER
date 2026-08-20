@@ -187,57 +187,6 @@ function AudioWaves() {
   return <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block" }} />;
 }
 
-/* Five concentric orbital ellipses with glowing dots */
-function OrbitRings() {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const el = ref.current; if (!el) return;
-    let raf = 0, t = 0;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const resize = () => { el.width = el.clientWidth * dpr; el.height = el.clientHeight * dpr; };
-    resize();
-    window.addEventListener("resize", resize, { passive: true });
-    const ctx = el.getContext("2d")!;
-
-    const RINGS = [
-      { rf: 0.09, sp: 1.4,  tilt: 0.38,  col: "#b892ff", n: 2 },
-      { rf: 0.17, sp: 0.80, tilt: -0.62, col: "#ff88aa", n: 3 },
-      { rf: 0.26, sp: 0.50, tilt: 0.95,  col: "#44ddff", n: 4 },
-      { rf: 0.36, sp: 0.33, tilt: -0.28, col: "#ffcc44", n: 5 },
-      { rf: 0.44, sp: 0.20, tilt: 0.65,  col: "#88ffcc", n: 7 },
-    ];
-
-    const draw = () => {
-      const W = el.width, H = el.height;
-      ctx.clearRect(0, 0, W, H);
-      const cx = W / 2, cy = H / 2;
-
-      for (const ring of RINGS) {
-        const rx = Math.min(W, H) * ring.rf;
-        const ry = rx * Math.abs(Math.cos(ring.tilt));
-        ctx.strokeStyle = ring.col; ctx.lineWidth = 0.7; ctx.globalAlpha = 0.13;
-        ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, ring.tilt, 0, Math.PI * 2); ctx.stroke();
-
-        for (let d = 0; d < ring.n; d++) {
-          const a = t * ring.sp + (d / ring.n) * Math.PI * 2;
-          ctx.fillStyle = ring.col;
-          ctx.globalAlpha = 0.9;
-          ctx.shadowColor = ring.col; ctx.shadowBlur = 7;
-          ctx.beginPath();
-          ctx.arc(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry, 2.2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      ctx.shadowBlur = 0;
-      t += 0.011;
-      raf = requestAnimationFrame(draw);
-    };
-    draw();
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
-  }, []);
-  return <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block" }} />;
-}
-
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -506,25 +455,21 @@ const PLANS = [
     price: "Free",
     cycle: "forever",
     color: "#b892ff",
-    items: ["5 cosmic whispers / day", "10 saved stars", "6 galaxy forms", "Ambient audio", "1080p capture"],
-    cta: "Begin Free",
+    blurb: "Five whispers a day, ten stars kept, six living forms, and the ambient soundscape.",
   },
   {
     tier: "COSMIC",
     price: "$9",
     cycle: "per month",
     color: "#ff88aa",
-    featured: true,
-    items: ["Unlimited whispers", "120 saved stars", "All 34 galaxy forms", "Full spatial audio", "4K capture", "Priority AI", "Custom palettes"],
-    cta: "Go Cosmic →",
+    blurb: "Unlimited whispers, all thirty-four forms, full spatial audio, 4K capture, custom palettes.",
   },
   {
     tier: "ETERNAL",
     price: "$29",
     cycle: "one time",
     color: "#44ddff",
-    items: ["Everything in Cosmic", "Lifetime access", "Early access to new forms", "Named star in constellation"],
-    cta: "Own the Cosmos",
+    blurb: "Everything in Cosmic, permanently — plus early access to new forms and a named star of your own.",
   },
 ];
 
@@ -899,61 +844,36 @@ export default function LandingPage() {
       {/* ─────────────────────────────────────────────────────────────────
           SECTION 8 — PRICING  (orbital background, editorial layout)
       ───────────────────────────────────────────────────────────────── */}
-      <section style={{ background: "#050308", borderBottom: L, padding: isMobile ? "80px 28px" : "110px 64px", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", inset: 0, opacity: 0.35, pointerEvents: "none" }}>
-          <OrbitRings />
-        </div>
-        <div style={{ position: "relative", maxWidth: 1200, margin: "0 auto" }}>
+      <section style={{ background: "#050308", borderBottom: L, padding: isMobile ? "80px 28px" : "110px 64px" }}>
+        <div style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
           <div id="price-eye" data-reveal style={{ ...reveal("price-eye"), color: "rgba(184,146,255,0.44)", fontSize: 9.5, letterSpacing: "0.52em", marginBottom: 14 }}>PRICING</div>
-          <h2 id="price-h2" data-reveal style={{ ...reveal("price-h2", 0.08), color: "#f0ecff", fontSize: "clamp(26px, 4.2vw, 50px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", marginBottom: 14 }}>
-            Choose your cosmos
+          <h2 id="price-h2" data-reveal style={{ ...reveal("price-h2", 0.08), color: "#f0ecff", fontSize: "clamp(24px, 3.6vw, 40px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", marginBottom: 14 }}>
+            Aether is free to explore
           </h2>
-          <p id="price-sub" data-reveal style={{ ...reveal("price-sub", 0.14), color: "rgba(200,196,235,0.42)", fontSize: "clamp(13px, 1.5vw, 15px)", fontFamily: "Georgia, serif", fontStyle: "italic", marginBottom: 16 }}>
-            Aether is free to explore. For the deeper journey, unlock the full spectrum.
+          <p id="price-sub" data-reveal style={{ ...reveal("price-sub", 0.14), color: "rgba(200,196,235,0.42)", fontSize: "clamp(13px, 1.5vw, 15px)", fontFamily: "Georgia, serif", fontStyle: "italic", marginBottom: 56 }}>
+            Three tiers are being built for the deeper journey. Here is what they will hold.
           </p>
-          <div id="price-notice" data-reveal style={{ ...reveal("price-notice", 0.2), display: "inline-block", border: "1px solid rgba(184,146,255,0.2)", borderRadius: 8, padding: "10px 20px", marginBottom: 52, color: "rgba(200,196,235,0.48)", fontSize: 12, fontFamily: "Georgia, serif", fontStyle: "italic" }}>
-            ✦ &nbsp;Premium tiers launching soon — join the waitlist below
-          </div>
 
-          <div id="price-grid" data-reveal style={{ ...reveal("price-grid", 0.26), display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 20, marginBottom: 64 }}>
+          <div id="price-tiers" data-reveal style={{ ...reveal("price-tiers", 0.2), borderTop: L }}>
             {PLANS.map(p => (
-              <div key={p.tier} style={{
-                background: p.featured ? `linear-gradient(160deg, rgba(255,136,170,0.08), rgba(184,146,255,0.06))` : "rgba(10,6,20,0.7)",
-                backdropFilter: "blur(18px)",
-                border: `1px solid ${p.color}${p.featured ? "44" : "20"}`,
-                borderRadius: 20,
-                padding: "38px 28px",
-                position: "relative",
-              }}>
-                {p.featured && (
-                  <div style={{ position: "absolute", top: -1, left: "50%", transform: "translateX(-50%)", background: "linear-gradient(90deg,#ff88aa,#b892ff)", color: "#fff", fontSize: 8.5, letterSpacing: "0.3em", padding: "5px 18px", borderRadius: "0 0 9px 9px", whiteSpace: "nowrap", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
-                    MOST CHOSEN
-                  </div>
-                )}
-                <div style={{ color: p.color, fontSize: 9, letterSpacing: "0.44em", marginBottom: 12 }}>{p.tier}</div>
-                <div style={{ color: "#f0ecff", fontSize: 40, fontWeight: 200, lineHeight: 1, marginBottom: 4, fontFamily: "Georgia, serif" }}>{p.price}</div>
-                <div style={{ color: "rgba(200,196,235,0.38)", fontSize: 11.5, letterSpacing: "0.1em", marginBottom: 28 }}>{p.cycle}</div>
-                <ul style={{ listStyle: "none", padding: 0, margin: "0 0 32px", display: "flex", flexDirection: "column", gap: 10 }}>
-                  {p.items.map(item => (
-                    <li key={item} style={{ display: "flex", gap: 10, alignItems: "flex-start", color: "rgba(200,196,235,0.62)", fontSize: 13, fontFamily: "Georgia, serif", lineHeight: 1.55 }}>
-                      <span style={{ color: p.color, flexShrink: 0, marginTop: 1 }}>✦</span>{item}
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  style={{ width: "100%", background: p.featured ? `linear-gradient(135deg,${p.color}44,${p.color}22)` : "rgba(8,5,18,0.6)", border: `1px solid ${p.color}44`, color: p.featured ? "#fff" : "rgba(220,216,255,0.6)", borderRadius: 999, padding: "14px 0", fontSize: 11, letterSpacing: "0.22em", cursor: "pointer", fontFamily: "'Helvetica Neue', Arial, sans-serif", transition: "all 0.35s ease", boxShadow: p.featured ? `0 0 24px ${p.color}28` : "none" }}
-                  onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.boxShadow = `0 0 32px ${p.color}44`; el.style.borderColor = p.color + "66"; }}
-                  onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.boxShadow = p.featured ? `0 0 24px ${p.color}28` : "none"; el.style.borderColor = p.color + "44"; }}>
-                  {p.cta}
-                </button>
+              <div key={p.tier} style={{ padding: "30px 0", borderBottom: L, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "center" : "baseline", gap: isMobile ? 8 : 24, textAlign: isMobile ? "center" : "left" }}>
+                <div style={{ flexShrink: 0, width: isMobile ? "auto" : 150 }}>
+                  <span style={{ color: p.color, fontSize: 10, letterSpacing: "0.36em" }}>{p.tier}</span>
+                  <span style={{ color: "rgba(200,196,235,0.35)", fontSize: 11, marginLeft: isMobile ? 8 : 0, display: isMobile ? "inline" : "block", marginTop: isMobile ? 0 : 4 }}>
+                    {p.price} · {p.cycle}
+                  </span>
+                </div>
+                <p style={{ color: "rgba(200,196,235,0.55)", fontSize: 13.5, fontFamily: "Georgia, serif", fontStyle: "italic", lineHeight: 1.7, margin: 0, flex: 1 }}>
+                  {p.blurb}
+                </p>
               </div>
             ))}
           </div>
 
-          {/* Waitlist */}
-          <div id="waitlist" data-reveal style={{ ...reveal("waitlist", 0.32), maxWidth: 460, margin: "0 auto", textAlign: "center" }}>
-            <div style={{ color: "rgba(200,196,235,0.48)", fontSize: 13, fontFamily: "Georgia, serif", fontStyle: "italic", marginBottom: 18 }}>
-              Get early access when premium launches
+          {/* Waitlist — the one action that's actually live right now */}
+          <div id="waitlist" data-reveal style={{ ...reveal("waitlist", 0.32), maxWidth: 420, margin: "56px auto 0" }}>
+            <div style={{ color: "rgba(200,196,235,0.42)", fontSize: 12.5, fontFamily: "Georgia, serif", fontStyle: "italic", marginBottom: 18 }}>
+              Leave your address, and Aether will find you when it opens.
             </div>
             {joined ? (
               <div style={{ color: "#b892ff", fontSize: 14, fontFamily: "Georgia, serif", fontStyle: "italic", textShadow: "0 0 20px #b892ff55", lineHeight: 1.7 }}>
@@ -962,8 +882,11 @@ export default function LandingPage() {
             ) : (
               <form onSubmit={e => { e.preventDefault(); if (email.trim()) setJoined(true); }} style={{ display: "flex", gap: 10 }}>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@cosmos.com" required
-                  style={{ flex: 1, background: "rgba(12,7,24,.7)", backdropFilter: "blur(14px)", border: "1px solid rgba(150,130,230,.22)", borderRadius: 999, color: "#eee9ff", fontSize: 13.5, padding: "13px 20px", outline: "none", fontFamily: "Georgia, serif", minWidth: 0 }} />
-                <button type="submit" style={{ background: "linear-gradient(135deg,rgba(184,146,255,.25),rgba(184,146,255,.12))", border: "1px solid rgba(184,146,255,.5)", color: "#ece8ff", borderRadius: 999, padding: "13px 24px", fontSize: 11, letterSpacing: "0.2em", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'Helvetica Neue',Arial,sans-serif", flexShrink: 0 }}>
+                  style={{ flex: 1, background: "none", border: "none", borderBottom: "1px solid rgba(150,130,230,.28)", color: "#eee9ff", fontSize: 13.5, padding: "10px 4px", outline: "none", fontFamily: "Georgia, serif", minWidth: 0 }} />
+                <button type="submit"
+                  style={{ background: "none", border: "1px solid rgba(184,146,255,0.28)", color: "rgba(200,196,235,0.65)", borderRadius: 999, padding: "10px 22px", fontSize: 10.5, letterSpacing: "0.22em", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'Helvetica Neue',Arial,sans-serif", flexShrink: 0, transition: "all 0.35s ease" }}
+                  onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(184,146,255,0.55)"; el.style.color = "#f0ecff"; }}
+                  onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(184,146,255,0.28)"; el.style.color = "rgba(200,196,235,0.65)"; }}>
                   JOIN
                 </button>
               </form>
