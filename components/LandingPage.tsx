@@ -575,7 +575,7 @@ export default function LandingPage() {
         </button>
         {!isMobile && (
           <div style={{ display: "flex", gap: 32 }}>
-            {([ ["EXPLORE", "feat-h2"], ["FORMS", "forms-h2"], ["SOUND", "freq-h2"], ["PRICING", "price-h2"] ] as const).map(([lbl, id]) => (
+            {([ ["EXPLORE", "feat-h2"], ["FORMS", "act-2"], ["SOUND", "freq-h2"], ["PRICING", "price-h2"] ] as const).map(([lbl, id]) => (
               <button key={id} onClick={() => scrollTo(id)}
                 style={{ background: "none", border: "none", color: "rgba(200,196,235,0.48)", fontSize: 9, letterSpacing: "0.38em", cursor: "pointer", fontFamily: "'Helvetica Neue', Arial, sans-serif", transition: "color 0.3s" }}
                 onMouseEnter={e => (e.currentTarget.style.color = "#b892ff")}
@@ -768,50 +768,6 @@ export default function LandingPage() {
           {["~40,000 PARTICLES", "34 FORMS", "REAL-TIME"].map(s => (
             <span key={s} style={{ color: "rgba(200,196,235,0.24)", fontSize: 9, letterSpacing: "0.3em" }}>{s}</span>
           ))}
-        </div>
-      </section>
-
-      {/* ─────────────────────────────────────────────────────────────────
-          SECTION 5 — FORMS MARQUEE  (two rows, opposite directions)
-      ───────────────────────────────────────────────────────────────── */}
-      <section style={{ background: "#07030f", borderBottom: L, padding: "70px 0", overflow: "hidden" }}>
-        <div id="forms-eye" data-reveal style={{ ...reveal("forms-eye"), color: "rgba(184,146,255,0.44)", fontSize: 9.5, letterSpacing: "0.52em", textAlign: "center", marginBottom: 36 }}>
-          GALAXY FORMS
-        </div>
-        <h2 id="forms-h2" data-reveal style={{ ...reveal("forms-h2", 0.08), color: "#f0ecff", fontSize: "clamp(24px, 4vw, 48px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", textAlign: "center", marginBottom: 52 }}>
-          34 Living Galaxy Forms
-        </h2>
-
-        {/* Row 1 — left */}
-        <div style={{ overflow: "hidden", marginBottom: 14 }}>
-          <div style={{ display: "inline-flex", animation: "aether-ticker-l 55s linear infinite", whiteSpace: "nowrap" }}>
-            {[0, 1, 2].map(k => (
-              <span key={k} style={{ display: "inline-flex" }}>
-                {GALAXY_FORMS.map(f => (
-                  <span key={f.label + k} style={{ display: "inline-flex", alignItems: "center", gap: 10, marginRight: 44 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: 999, background: f.color, boxShadow: `0 0 8px ${f.color}`, display: "inline-block", flexShrink: 0 }} />
-                    <span style={{ color: "#d8d4f2", fontSize: 12, letterSpacing: "0.22em", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>{f.label}</span>
-                  </span>
-                ))}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* Row 2 — right (opposite direction, themes) */}
-        <div style={{ overflow: "hidden" }}>
-          <div style={{ display: "inline-flex", animation: "aether-ticker-r 62s linear infinite", whiteSpace: "nowrap" }}>
-            {[0, 1, 2].map(k => (
-              <span key={k} style={{ display: "inline-flex" }}>
-                {[...GALAXY_FORMS].reverse().map(f => (
-                  <span key={f.label + k} style={{ display: "inline-flex", alignItems: "center", gap: 10, marginRight: 44 }}>
-                    <span style={{ color: f.color, fontSize: 10, letterSpacing: "0.1em", fontFamily: "Georgia, serif", fontStyle: "italic", opacity: 0.55 }}>{f.theme}</span>
-                    <span style={{ width: 4, height: 4, borderRadius: 999, background: f.color, opacity: 0.4, display: "inline-block", flexShrink: 0 }} />
-                  </span>
-                ))}
-              </span>
-            ))}
-          </div>
         </div>
       </section>
 
