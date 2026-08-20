@@ -2546,7 +2546,7 @@ export default function AetherCanvas() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div style={{position:"absolute",inset:0,overflow:"hidden",background:"#050308",fontFamily:"'Helvetica Neue', Arial, sans-serif"}}>
+    <div style={{position:"absolute",inset:0,overflow:"hidden",background:"#050308",fontFamily:"var(--font-sans), Arial, sans-serif"}}>
       <div ref={mountRef} style={{position:"absolute",inset:0,touchAction:"none",cursor:"grab"}} />
 
       {/* Vignette */}
@@ -2580,7 +2580,7 @@ export default function AetherCanvas() {
           >
             {/* Dark scrim so the label reads over any galaxy brightness */}
             <div style={{position:"absolute",inset:0,background:"radial-gradient(ellipse 70% 30% at 50% 50%, rgba(3,2,8,0.72) 0%, rgba(3,2,8,0.35) 55%, transparent 100%)"}} />
-            <div style={{position:"relative",color:"#ffffff",fontSize:"clamp(18px, 5vw, 60px)",letterSpacing:"0.46em",fontWeight:200,textShadow:`0 0 24px ${accentColor}, 0 0 70px ${abb}, 0 0 130px ${a66}, 0 2px 6px rgba(0,0,0,0.9)`,fontFamily:"'Helvetica Neue', Arial, sans-serif",textAlign:"center"}}>
+            <div style={{position:"relative",color:"#ffffff",fontSize:"clamp(18px, 5vw, 60px)",letterSpacing:"0.46em",fontWeight:200,textShadow:`0 0 24px ${accentColor}, 0 0 70px ${abb}, 0 0 130px ${a66}, 0 2px 6px rgba(0,0,0,0.9)`,fontFamily:"var(--font-sans), Arial, sans-serif",textAlign:"center"}}>
               {morphLabel.label}
             </div>
           </motion.div>
@@ -2628,7 +2628,7 @@ export default function AetherCanvas() {
             key={loading?"__loading__":whisper}
             initial={{opacity:0,y:14}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-10}}
             transition={{duration:1.2,ease:[0.22,1,0.36,1]}}
-            style={{maxWidth:660,textAlign:"center",color:"#f5f2ff",fontFamily:"Georgia, 'Times New Roman', 'Palatino Linotype', serif",fontStyle:"italic",fontSize:"clamp(19px, 3.4vw, 34px)",lineHeight:1.62,letterSpacing:"0.012em",textShadow:`0 0 44px ${a66}, 0 0 90px ${a44}, 0 2px 4px rgba(0,0,0,.5)`,transition:"text-shadow 0.9s ease"}}
+            style={{maxWidth:660,textAlign:"center",color:"#f5f2ff",fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",fontSize:"clamp(19px, 3.4vw, 34px)",lineHeight:1.62,letterSpacing:"0.012em",textShadow:`0 0 44px ${a66}, 0 0 90px ${a44}, 0 2px 4px rgba(0,0,0,.5)`,transition:"text-shadow 0.9s ease"}}
           >
             {loading?"Aether is contemplating…":whisper}
           </motion.div>
@@ -2643,13 +2643,13 @@ export default function AetherCanvas() {
             transition={{duration:1.4,ease:[0.22,1,0.36,1]}}
             style={{position:"absolute",left:0,right:0,bottom:96,display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"0 18px",zIndex:2}}
           >
-            <div style={{color:"rgba(200,196,235,.5)",fontSize:12,fontFamily:"Georgia, serif",fontStyle:"italic",textShadow:"0 1px 8px rgba(0,0,0,.8)"}}>
+            <div style={{color:"rgba(200,196,235,.5)",fontSize:12,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",textShadow:"0 1px 8px rgba(0,0,0,.8)"}}>
               Try whispering one of these to the void…
             </div>
             <div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center"}}>
               {["the calm before a storm","someone I still miss","infinite possibility"].map(chip=>(
                 <button key={chip} onClick={()=>release(chip)}
-                  style={{background:"rgba(14,10,28,.72)",backdropFilter:"blur(12px)",border:`1px solid ${a44}`,color:"rgba(226,222,255,.85)",borderRadius:999,padding:"9px 18px",fontSize:12.5,fontFamily:"Georgia, serif",fontStyle:"italic",cursor:"pointer",boxShadow:`0 0 16px ${a44}`,transition:"all 0.35s ease"}}
+                  style={{background:"rgba(14,10,28,.72)",backdropFilter:"blur(12px)",border:`1px solid ${a44}`,color:"rgba(226,222,255,.85)",borderRadius:999,padding:"9px 18px",fontSize:12.5,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",cursor:"pointer",boxShadow:`0 0 16px ${a44}`,transition:"all 0.35s ease"}}
                   onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.borderColor=a88;(e.currentTarget as HTMLElement).style.color="#fff";}}
                   onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.borderColor=a44;(e.currentTarget as HTMLElement).style.color="rgba(226,222,255,.85)";}}>
                   {chip}
@@ -2733,7 +2733,7 @@ export default function AetherCanvas() {
               <div style={{color:"#e9e6ff",fontSize:11,letterSpacing:"0.3em"}}>GALAXY EXPLORER</div>
               <button onClick={()=>setExplore(false)} style={{background:"none",border:"none",color:"rgba(220,216,255,.55)",fontSize:18,cursor:"pointer"}}>&times;</button>
             </div>
-            <div style={{color:"rgba(200,196,235,.34)",fontSize:11,padding:"0 22px 12px",fontStyle:"italic",fontFamily:"Georgia, serif"}}>
+            <div style={{color:"rgba(200,196,235,.34)",fontSize:11,padding:"0 22px 12px",fontStyle:"italic",fontFamily:"var(--font-serif), Georgia, serif"}}>
               {FORMS.length} living forms. Tap any to become it.
             </div>
             <div style={{flex:1,overflowY:"auto",padding:"0 10px 16px"}}>
@@ -2744,7 +2744,7 @@ export default function AetherCanvas() {
                   <button key={f} onClick={()=>exploreForm(f,i)}
                     style={{display:"flex",alignItems:"center",gap:11,width:"100%",textAlign:"left",background:active?`${c}18`:"none",border:"none",borderLeft:active?`2px solid ${c}`:"2px solid transparent",padding:"9px 12px",cursor:"pointer",borderRadius:6}}>
                     <span style={{width:7,height:7,borderRadius:99,background:c,boxShadow:`0 0 9px ${c}`,flexShrink:0}}/>
-                    <span style={{color:active?"#fff":"rgba(216,212,242,.72)",fontSize:10.5,letterSpacing:"0.22em",fontFamily:"'Helvetica Neue', Arial, sans-serif"}}>
+                    <span style={{color:active?"#fff":"rgba(216,212,242,.72)",fontSize:10.5,letterSpacing:"0.22em",fontFamily:"var(--font-sans), Arial, sans-serif"}}>
                       {FORM_LABELS[f]}
                     </span>
                   </button>
@@ -2769,7 +2769,7 @@ export default function AetherCanvas() {
             </div>
             <div style={{flex:1,overflowY:"auto",padding:"0 12px"}}>
               {list.length===0&&(
-                <div style={{color:"rgba(200,196,235,.36)",fontSize:13,padding:"22px 12px",fontStyle:"italic",fontFamily:"Georgia, serif",lineHeight:1.6}}>
+                <div style={{color:"rgba(200,196,235,.36)",fontSize:13,padding:"22px 12px",fontStyle:"italic",fontFamily:"var(--font-serif), Georgia, serif",lineHeight:1.6}}>
                   No stars yet. Every thought you release becomes one.
                 </div>
               )}
@@ -2779,7 +2779,7 @@ export default function AetherCanvas() {
                     <span style={{width:8,height:8,borderRadius:8,background:s.palette[2],boxShadow:`0 0 10px ${s.palette[2]}`,display:"inline-block",flexShrink:0}}/>
                     <span style={{color:s.palette[2],fontSize:8,letterSpacing:"0.22em",opacity:0.8}}>{FORM_LABELS[s.form]??s.form.toUpperCase()}</span>
                   </div>
-                  <div style={{color:"#ece8ff",fontSize:13.5,fontFamily:"Georgia, serif",fontStyle:"italic",lineHeight:1.5}}>{s.whisper}</div>
+                  <div style={{color:"#ece8ff",fontSize:13.5,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",lineHeight:1.5}}>{s.whisper}</div>
                 </div>
               ))}
             </div>

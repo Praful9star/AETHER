@@ -570,14 +570,14 @@ export default function LandingPage() {
         pointerEvents: navUp ? "auto" : "none",
       }}>
         <button onClick={scrollToTop}
-          style={{ background: "none", border: "none", color: "#eceaff", fontSize: 11, letterSpacing: "0.6em", cursor: "pointer", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
+          style={{ background: "none", border: "none", color: "#eceaff", fontSize: 11, letterSpacing: "0.6em", cursor: "pointer", fontFamily: "var(--font-sans), Arial, sans-serif" }}>
           A E T H E R
         </button>
         {!isMobile && (
           <div style={{ display: "flex", gap: 32 }}>
             {([ ["EXPLORE", "feat-h2"], ["FORMS", "act-2"], ["SOUND", "freq-h2"], ["PRICING", "price-h2"] ] as const).map(([lbl, id]) => (
               <button key={id} onClick={() => scrollTo(id)}
-                style={{ background: "none", border: "none", color: "rgba(200,196,235,0.48)", fontSize: 9, letterSpacing: "0.38em", cursor: "pointer", fontFamily: "'Helvetica Neue', Arial, sans-serif", transition: "color 0.3s" }}
+                style={{ background: "none", border: "none", color: "rgba(200,196,235,0.48)", fontSize: 9, letterSpacing: "0.38em", cursor: "pointer", fontFamily: "var(--font-sans), Arial, sans-serif", transition: "color 0.3s" }}
                 onMouseEnter={e => (e.currentTarget.style.color = "#b892ff")}
                 onMouseLeave={e => (e.currentTarget.style.color = "rgba(200,196,235,0.48)")}
               >
@@ -624,16 +624,16 @@ export default function LandingPage() {
               A LIVING COSMOS
             </div>
             <blockquote id="mani-q" data-reveal
-              style={{ ...reveal("mani-q", 0.1), margin: "0 0 32px", padding: 0, color: "#f0ecff", fontSize: "clamp(22px, 3.4vw, 42px)", fontWeight: 200, fontFamily: "Georgia, 'Times New Roman', serif", fontStyle: "italic", lineHeight: 1.42, letterSpacing: "0.01em" }}>
+              style={{ ...reveal("mani-q", 0.1), margin: "0 0 32px", padding: 0, color: "#f0ecff", fontSize: "clamp(22px, 3.4vw, 42px)", fontWeight: 200, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic", lineHeight: 1.42, letterSpacing: "0.01em" }}>
               "Every civilization has looked up and asked.<br />
               Until now, none of them answered back."
             </blockquote>
             <p id="mani-sub" data-reveal
-              style={{ ...reveal("mani-sub", 0.2), margin: "0 0 44px", color: "rgba(200,196,235,0.45)", fontSize: "clamp(14px, 1.6vw, 16px)", lineHeight: 1.88, fontFamily: "Georgia, serif", fontStyle: "italic", maxWidth: 520 }}>
+              style={{ ...reveal("mani-sub", 0.2), margin: "0 0 44px", color: "rgba(200,196,235,0.45)", fontSize: "clamp(14px, 1.6vw, 16px)", lineHeight: 1.88, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic", maxWidth: 520 }}>
               Aether is not an app. It is an instrument — an AI-powered particle universe that listens to the shape of your thoughts and rearranges 40,000 stars into something uniquely, quietly yours.
             </p>
             <button id="mani-cta" data-reveal onClick={() => scrollTo("feat-h2")}
-              style={{ ...reveal("mani-cta", 0.3), background: "none", border: "1px solid rgba(184,146,255,0.28)", color: "rgba(200,196,235,0.65)", borderRadius: 999, padding: "13px 28px", fontSize: 10, letterSpacing: "0.3em", cursor: "pointer", fontFamily: "'Helvetica Neue', Arial, sans-serif", transition: "all 0.4s ease" }}
+              style={{ ...reveal("mani-cta", 0.3), background: "none", border: "1px solid rgba(184,146,255,0.28)", color: "rgba(200,196,235,0.65)", borderRadius: 999, padding: "13px 28px", fontSize: 10, letterSpacing: "0.3em", cursor: "pointer", fontFamily: "var(--font-sans), Arial, sans-serif", transition: "all 0.4s ease" }}
               onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(184,146,255,0.55)"; el.style.color = "#f0ecff"; }}
               onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(184,146,255,0.28)"; el.style.color = "rgba(200,196,235,0.65)"; }}>
               EXPLORE AETHER ↓
@@ -668,7 +668,7 @@ export default function LandingPage() {
               <button onClick={() => scrollTo(s.id)} style={{
                 background: "none", border: "none", cursor: "pointer", padding: 0,
                 color: "rgba(200,196,235,0.4)", fontSize: isMobile ? 10 : 11, letterSpacing: "0.32em",
-                fontFamily: "'Helvetica Neue', Arial, sans-serif", transition: "color 0.35s ease",
+                fontFamily: "var(--font-sans), Arial, sans-serif", transition: "color 0.35s ease",
               }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = s.color; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "rgba(200,196,235,0.4)"; }}>
@@ -691,12 +691,12 @@ export default function LandingPage() {
             placeholder="whisper something…"
             style={{
               background: "none", border: "none", borderBottom: "1px solid rgba(184,146,255,0.25)",
-              color: "#eee9ff", fontSize: 16, fontFamily: "Georgia, serif", fontStyle: "italic",
+              color: "#eee9ff", fontSize: 16, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic",
               textAlign: "center", padding: "8px 4px", outline: "none", width: "100%", maxWidth: 380,
             }}
           />
           <p style={{
-            marginTop: 26, color: "rgba(200,196,235,0.4)", fontSize: 13.5, fontFamily: "Georgia, serif", fontStyle: "italic",
+            marginTop: 26, color: "rgba(200,196,235,0.4)", fontSize: 13.5, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic",
             opacity: whisperText.trim().length > 0 ? 1 : 0, transition: "opacity 1.4s ease", minHeight: 20,
           }}>
             A thought can become a universe.
@@ -722,14 +722,14 @@ export default function LandingPage() {
                   <div style={{ color: GALAXY_FORMS[hoveredForm].color, fontSize: 11, letterSpacing: "0.32em", marginBottom: 6, textShadow: `0 0 16px ${GALAXY_FORMS[hoveredForm].color}77` }}>
                     {GALAXY_FORMS[hoveredForm].label}
                   </div>
-                  <div style={{ color: "rgba(200,196,235,0.5)", fontSize: 12, fontFamily: "Georgia, serif", fontStyle: "italic" }}>
+                  <div style={{ color: "rgba(200,196,235,0.5)", fontSize: 12, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic" }}>
                     {GALAXY_FORMS[hoveredForm].theme}
                   </div>
                 </>
               )}
             </div>
           </div>
-          <p style={{ marginTop: 8, color: "rgba(200,196,235,0.3)", fontSize: 12, fontFamily: "Georgia, serif", fontStyle: "italic" }}>
+          <p style={{ marginTop: 8, color: "rgba(200,196,235,0.3)", fontSize: 12, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic" }}>
             {isMobile ? "touch a point" : "move your cursor through the field"}
           </p>
         </div>
@@ -740,7 +740,7 @@ export default function LandingPage() {
           <div style={{ height: isMobile ? 160 : 200, position: "relative", maxWidth: 780, margin: "0 auto" }}>
             <SoundField />
           </div>
-          <p style={{ marginTop: 24, color: "rgba(200,196,235,0.34)", fontSize: 13, fontFamily: "Georgia, serif", fontStyle: "italic" }}>
+          <p style={{ marginTop: 24, color: "rgba(200,196,235,0.34)", fontSize: 13, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic" }}>
             the universe has a voice — move to hear it change
           </p>
         </div>
@@ -756,7 +756,7 @@ export default function LandingPage() {
             <MemoryField onSelect={setSelectedMemory} focusIndex={kbMemoryIndex} />
           </div>
           <p style={{
-            marginTop: 20, color: "rgba(255,217,168,0.55)", fontSize: 14, fontFamily: "Georgia, serif", fontStyle: "italic",
+            marginTop: 20, color: "rgba(255,217,168,0.55)", fontSize: 14, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic",
             opacity: selectedMemory !== null ? 1 : 0, transition: "opacity 1s ease", minHeight: 20,
           }}>
             Some things remain.
@@ -777,10 +777,10 @@ export default function LandingPage() {
       <section style={{ background: "#07030f", borderBottom: L, padding: isMobile ? "80px 28px" : "100px 64px" }}>
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
           <div id="freq-eye" data-reveal style={{ ...reveal("freq-eye"), color: "rgba(184,146,255,0.44)", fontSize: 9.5, letterSpacing: "0.52em", marginBottom: 14 }}>SPATIAL AUDIO</div>
-          <h2 id="freq-h2" data-reveal style={{ ...reveal("freq-h2", 0.08), color: "#f0ecff", fontSize: "clamp(26px, 4.2vw, 50px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", marginBottom: 16 }}>
+          <h2 id="freq-h2" data-reveal style={{ ...reveal("freq-h2", 0.08), color: "#f0ecff", fontSize: "clamp(26px, 4.2vw, 50px)", fontWeight: 200, fontFamily: "var(--font-serif), Georgia, serif", letterSpacing: "0.04em", marginBottom: 16 }}>
             Every galaxy speaks differently
           </h2>
-          <p id="freq-sub" data-reveal style={{ ...reveal("freq-sub", 0.16), color: "rgba(200,196,235,0.45)", fontSize: "clamp(14px, 1.6vw, 16px)", lineHeight: 1.85, fontFamily: "Georgia, serif", fontStyle: "italic", maxWidth: 560, marginBottom: 52 }}>
+          <p id="freq-sub" data-reveal style={{ ...reveal("freq-sub", 0.16), color: "rgba(200,196,235,0.45)", fontSize: "clamp(14px, 1.6vw, 16px)", lineHeight: 1.85, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic", maxWidth: 560, marginBottom: 52 }}>
             The moment a galaxy form appears, its sonic environment activates — a unique audio world generated from the emotional signature of its shape and your whisper.
           </p>
           <div id="freq-canvas" data-reveal style={{ ...reveal("freq-canvas", 0.22), height: 200, borderRadius: 4, overflow: "hidden", border: L, marginBottom: 36 }}>
@@ -790,7 +790,7 @@ export default function LandingPage() {
             {FREQ_SAMPLES.map(f => (
               <div key={f.form} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 160 }}>
                 <span style={{ color: f.color, fontSize: 8.5, letterSpacing: "0.34em" }}>{f.form}</span>
-                <span style={{ color: "rgba(200,196,235,0.38)", fontSize: 11.5, fontFamily: "Georgia, serif", fontStyle: "italic" }}>{f.sound}</span>
+                <span style={{ color: "rgba(200,196,235,0.38)", fontSize: 11.5, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic" }}>{f.sound}</span>
               </div>
             ))}
           </div>
@@ -803,10 +803,10 @@ export default function LandingPage() {
       <section style={{ background: "#050308", borderBottom: L, padding: isMobile ? "80px 28px" : "110px 64px" }}>
         <div style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
           <div id="price-eye" data-reveal style={{ ...reveal("price-eye"), color: "rgba(184,146,255,0.44)", fontSize: 9.5, letterSpacing: "0.52em", marginBottom: 14 }}>PRICING</div>
-          <h2 id="price-h2" data-reveal style={{ ...reveal("price-h2", 0.08), color: "#f0ecff", fontSize: "clamp(24px, 3.6vw, 40px)", fontWeight: 200, fontFamily: "Georgia, serif", letterSpacing: "0.04em", marginBottom: 14 }}>
+          <h2 id="price-h2" data-reveal style={{ ...reveal("price-h2", 0.08), color: "#f0ecff", fontSize: "clamp(24px, 3.6vw, 40px)", fontWeight: 200, fontFamily: "var(--font-serif), Georgia, serif", letterSpacing: "0.04em", marginBottom: 14 }}>
             Aether is free to explore
           </h2>
-          <p id="price-sub" data-reveal style={{ ...reveal("price-sub", 0.14), color: "rgba(200,196,235,0.42)", fontSize: "clamp(13px, 1.5vw, 15px)", fontFamily: "Georgia, serif", fontStyle: "italic", marginBottom: 56 }}>
+          <p id="price-sub" data-reveal style={{ ...reveal("price-sub", 0.14), color: "rgba(200,196,235,0.42)", fontSize: "clamp(13px, 1.5vw, 15px)", fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic", marginBottom: 56 }}>
             Three tiers are being built for the deeper journey. Here is what they will hold.
           </p>
 
@@ -819,7 +819,7 @@ export default function LandingPage() {
                     {p.price} · {p.cycle}
                   </span>
                 </div>
-                <p style={{ color: "rgba(200,196,235,0.55)", fontSize: 13.5, fontFamily: "Georgia, serif", fontStyle: "italic", lineHeight: 1.7, margin: 0, flex: 1 }}>
+                <p style={{ color: "rgba(200,196,235,0.55)", fontSize: 13.5, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic", lineHeight: 1.7, margin: 0, flex: 1 }}>
                   {p.blurb}
                 </p>
               </div>
@@ -828,19 +828,19 @@ export default function LandingPage() {
 
           {/* Waitlist — the one action that's actually live right now */}
           <div id="waitlist" data-reveal style={{ ...reveal("waitlist", 0.32), maxWidth: 420, margin: "56px auto 0" }}>
-            <div style={{ color: "rgba(200,196,235,0.42)", fontSize: 12.5, fontFamily: "Georgia, serif", fontStyle: "italic", marginBottom: 18 }}>
+            <div style={{ color: "rgba(200,196,235,0.42)", fontSize: 12.5, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic", marginBottom: 18 }}>
               Leave your address, and Aether will find you when it opens.
             </div>
             {joined ? (
-              <div style={{ color: "#b892ff", fontSize: 14, fontFamily: "Georgia, serif", fontStyle: "italic", textShadow: "0 0 20px #b892ff55", lineHeight: 1.7 }}>
+              <div style={{ color: "#b892ff", fontSize: 14, fontFamily: "var(--font-serif), Georgia, serif", fontStyle: "italic", textShadow: "0 0 20px #b892ff55", lineHeight: 1.7 }}>
                 ✦ &nbsp;You are now among the stars. We will find you.
               </div>
             ) : (
               <form onSubmit={e => { e.preventDefault(); if (email.trim()) setJoined(true); }} style={{ display: "flex", gap: 10 }}>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@cosmos.com" required
-                  style={{ flex: 1, background: "none", border: "none", borderBottom: "1px solid rgba(150,130,230,.28)", color: "#eee9ff", fontSize: 13.5, padding: "10px 4px", outline: "none", fontFamily: "Georgia, serif", minWidth: 0 }} />
+                  style={{ flex: 1, background: "none", border: "none", borderBottom: "1px solid rgba(150,130,230,.28)", color: "#eee9ff", fontSize: 13.5, padding: "10px 4px", outline: "none", fontFamily: "var(--font-serif), Georgia, serif", minWidth: 0 }} />
                 <button type="submit"
-                  style={{ background: "none", border: "1px solid rgba(184,146,255,0.28)", color: "rgba(200,196,235,0.65)", borderRadius: 999, padding: "10px 22px", fontSize: 10.5, letterSpacing: "0.22em", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'Helvetica Neue',Arial,sans-serif", flexShrink: 0, transition: "all 0.35s ease" }}
+                  style={{ background: "none", border: "1px solid rgba(184,146,255,0.28)", color: "rgba(200,196,235,0.65)", borderRadius: 999, padding: "10px 22px", fontSize: 10.5, letterSpacing: "0.22em", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "var(--font-sans), Arial, sans-serif", flexShrink: 0, transition: "all 0.35s ease" }}
                   onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(184,146,255,0.55)"; el.style.color = "#f0ecff"; }}
                   onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(184,146,255,0.28)"; el.style.color = "rgba(200,196,235,0.65)"; }}>
                   JOIN
@@ -862,7 +862,7 @@ export default function LandingPage() {
           <div id="cta-pre" data-reveal style={{ ...reveal("cta-pre"), color: "rgba(184,146,255,0.45)", fontSize: 9.5, letterSpacing: "0.52em", marginBottom: 22 }}>
             BEGIN
           </div>
-          <div id="cta-word" data-reveal style={{ ...reveal("cta-word", 0.1), color: "#f0ecff", fontSize: "clamp(52px, 14vw, 148px)", fontWeight: 100, fontFamily: "Georgia, serif", letterSpacing: "0.14em", lineHeight: 1, textShadow: "0 0 100px rgba(184,146,255,0.22)", marginBottom: 22 }}>
+          <div id="cta-word" data-reveal style={{ ...reveal("cta-word", 0.1), color: "#f0ecff", fontSize: "clamp(52px, 14vw, 148px)", fontWeight: 100, fontFamily: "var(--font-serif), Georgia, serif", letterSpacing: "0.14em", lineHeight: 1, textShadow: "0 0 100px rgba(184,146,255,0.22)", marginBottom: 22 }}>
             ENTER
           </div>
           <div id="cta-sub2" data-reveal style={{ ...reveal("cta-sub2", 0.18), color: "rgba(200,196,235,0.38)", fontSize: "clamp(10px, 1.6vw, 13px)", letterSpacing: "0.44em", marginBottom: 48 }}>
@@ -870,7 +870,7 @@ export default function LandingPage() {
           </div>
           <div id="cta-btn" data-reveal style={{ ...reveal("cta-btn", 0.26) }}>
             <button onClick={scrollToTop}
-              style={{ background: "linear-gradient(135deg,rgba(184,146,255,0.18),rgba(255,136,170,0.1))", border: "1px solid rgba(184,146,255,0.35)", color: "#f0ecff", borderRadius: 999, padding: "17px 48px", fontSize: 11, letterSpacing: "0.34em", cursor: "pointer", fontFamily: "'Helvetica Neue',Arial,sans-serif", boxShadow: "0 0 40px rgba(184,146,255,0.15)", transition: "all 0.4s ease" }}
+              style={{ background: "linear-gradient(135deg,rgba(184,146,255,0.18),rgba(255,136,170,0.1))", border: "1px solid rgba(184,146,255,0.35)", color: "#f0ecff", borderRadius: 999, padding: "17px 48px", fontSize: 11, letterSpacing: "0.34em", cursor: "pointer", fontFamily: "var(--font-sans), Arial, sans-serif", boxShadow: "0 0 40px rgba(184,146,255,0.15)", transition: "all 0.4s ease" }}
               onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.boxShadow = "0 0 70px rgba(184,146,255,0.36)"; el.style.borderColor = "rgba(184,146,255,0.58)"; }}
               onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.boxShadow = "0 0 40px rgba(184,146,255,0.15)"; el.style.borderColor = "rgba(184,146,255,0.35)"; }}>
               BEGIN YOUR JOURNEY &nbsp; ✦
@@ -898,7 +898,7 @@ export default function LandingPage() {
         background: "rgba(10,6,22,0.88)", backdropFilter: "blur(18px)",
         border: "1px solid rgba(184,146,255,0.26)", color: "#b892ff",
         borderRadius: 999, padding: "10px 18px", fontSize: 9.5, letterSpacing: "0.28em",
-        cursor: "pointer", fontFamily: "'Helvetica Neue',Arial,sans-serif",
+        cursor: "pointer", fontFamily: "var(--font-sans), Arial, sans-serif",
         boxShadow: "0 0 16px rgba(184,146,255,0.1)",
         transition: "opacity 0.5s ease, transform 0.5s ease",
         opacity: scrolled ? 1 : 0,

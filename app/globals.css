@@ -18,7 +18,7 @@ html {
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: var(--font-serif), Georgia, 'Times New Roman', serif;
   margin: 0;
   padding: 0;
 }
