@@ -1396,6 +1396,28 @@ export default function AetherCanvas() {
     renderer.setClearColor(0x050308,1);
     mount.appendChild(renderer.domElement);
 
+    // WebGL context loss recovery — without preventDefault() here, a lost
+    // context (GPU driver reset, mobile Safari memory pressure, tab
+    // backgrounded too long) leaves the canvas permanently black with no
+    // browser-side attempt to restore it. This project has already shipped
+    // full-page whiteouts once; this is the one WebGL failure mode that can
+    // still cause that class of incident with zero code-side trigger. On
+    // restore, a full reload is the only fully-correct recovery for a raw
+    // imperative Three.js scene this size (re-verifying partial in-place
+    // resource restoration is out of scope and riskier than a clean reload).
+    let ctxLost=false;
+    const onContextLost=(e:Event)=>{ e.preventDefault(); ctxLost=true; };
+    const onContextRestored=()=>{ window.location.reload(); };
+    renderer.domElement.addEventListener("webglcontextlost",onContextLost,false);
+    renderer.domElement.addEventListener("webglcontextrestored",onContextRestored,false);
+
+    // Pause the whole compute+render loop while the tab is hidden — some
+    // mobile browsers still fire rAF at a low but nonzero rate in the
+    // background and would otherwise keep doing full per-particle work.
+    let tabHidden=document.hidden;
+    const onVisibility=()=>{ tabHidden=document.hidden; };
+    document.addEventListener("visibilitychange",onVisibility);
+
     const scene=new THREE.Scene();
     scene.fog=new THREE.FogExp2(0x050308,0.003);
     const camera=new THREE.PerspectiveCamera(60,mount.clientWidth/mount.clientHeight,0.1,600);
@@ -1961,6 +1983,7 @@ export default function AetherCanvas() {
 
     const loop=()=>{
       raf=requestAnimationFrame(loop);
+      if (ctxLost||tabHidden) return;
       const now=performance.now();
       const dt=Math.min(0.05,(now-lastT)/1000);
       lastT=now;
@@ -2221,6 +2244,9 @@ export default function AetherCanvas() {
       window.removeEventListener("keydown",markAct);
       window.removeEventListener("deviceorientation",onDeviceOrientation);
       motionMQ?.removeEventListener?.("change",onMotionChange);
+      document.removeEventListener("visibilitychange",onVisibility);
+      renderer.domElement.removeEventListener("webglcontextlost",onContextLost);
+      renderer.domElement.removeEventListener("webglcontextrestored",onContextRestored);
       el.removeEventListener("pointerdown",onDown);
       el.removeEventListener("mousemove",onMouseMove);
       el.removeEventListener("mouseleave",onMouseLeave);
