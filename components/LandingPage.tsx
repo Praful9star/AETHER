@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useRef, useEffect, useState, useCallback } from "react";
+import ErrorBoundary from "./ErrorBoundary";
 
 const AetherCanvas = dynamic(() => import("./AetherCanvas"), { ssr: false });
 
@@ -593,7 +594,9 @@ export default function LandingPage() {
       ───────────────────────────────────────────────────────────────── */}
       <section ref={heroRef}
         style={{ position: "relative", height: "100svh", overflow: "hidden" }}>
-        <AetherCanvas />
+        <ErrorBoundary>
+          <AetherCanvas />
+        </ErrorBoundary>
       </section>
 
       {/* ─────────────────────────────────────────────────────────────────
