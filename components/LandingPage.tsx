@@ -570,7 +570,7 @@ export default function LandingPage() {
         pointerEvents: navUp ? "auto" : "none",
       }}>
         <button onClick={scrollToTop}
-          style={{ background: "none", border: "none", color: "#eceaff", fontSize: 11, letterSpacing: "0.6em", cursor: "pointer", fontFamily: "var(--font-sans), Arial, sans-serif" }}>
+          style={{ background: "none", border: "none", color: "#eceaff", fontSize: 11, letterSpacing: "0.6em", cursor: "pointer", fontFamily: "var(--font-sans), Arial, sans-serif", padding: "12px 6px", margin: "-12px -6px" }}>
           A E T H E R
         </button>
         {!isMobile && (
@@ -666,7 +666,8 @@ export default function LandingPage() {
           ].map((s, i, arr) => (
             <div key={s.id} style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 22 }}>
               <button onClick={() => scrollTo(s.id)} style={{
-                background: "none", border: "none", cursor: "pointer", padding: 0,
+                background: "none", border: "none", cursor: "pointer",
+                padding: isMobile ? "14px 6px" : "8px 4px", margin: isMobile ? "-14px -6px" : "-8px -4px",
                 color: "rgba(200,196,235,0.4)", fontSize: isMobile ? 10 : 11, letterSpacing: "0.32em",
                 fontFamily: "var(--font-sans), Arial, sans-serif", transition: "color 0.35s ease",
               }}
