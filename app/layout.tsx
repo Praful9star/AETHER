@@ -10,11 +10,16 @@ import "./globals.css";
 // render-blocking @import), exposed as CSS variables so every existing
 // fontFamily reference in the app can point at var(--font-serif) /
 // var(--font-sans) instead of a hardcoded system-font string.
+// Loaded as a variable font (its full 100-900 weight axis, plus optical
+// size) rather than a fixed set of static weights — several headings in
+// the app ask for true ultra-light weights (100, 200) for large display
+// type, which a 300/400/500-only static set can't actually produce; the
+// browser would just silently substitute the nearest loaded weight.
 const fraunces = Fraunces({
   subsets: ["latin"],
   variable: "--font-serif",
   style: ["normal", "italic"],
-  weight: ["300", "400", "500"],
+  weight: "variable",
   display: "swap",
 });
 const inter = Inter({
