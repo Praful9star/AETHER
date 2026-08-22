@@ -11,21 +11,20 @@ export async function GET(req: Request) {
     return Response.json([]);
   }
 
+  // No bulk "public feed" — a whisper is private to whoever wrote it unless
+  // shared explicitly (via its own /w/[id] link, fetched by id elsewhere).
+  // Without a user_id this must return nothing rather than let anyone
+  // enumerate other people's whispers.
+  if (!userId) return Response.json([]);
+
   try {
     const supabase = createClient(supabaseUrl, supabaseKey);
-    const query = supabase
+    const { data, error } = await supabase
       .from("whispers")
       .select("id,thought,whisper,palette,form,energy,pos,created_at")
+      .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(30);
-
-    if (userId) {
-      query.eq("user_id", userId);
-    } else {
-      query.eq("public", true);
-    }
-
-    const { data, error } = await query;
     if (error) throw error;
 
     return Response.json(

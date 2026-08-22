@@ -26,7 +26,9 @@ export async function POST(req: Request) {
         form: String(form ?? "spiral"),
         energy: Number(energy ?? 0.5),
         pos: pos ?? null,
-        public: true,
+        // Private by default — a whisper is only reachable by its own
+        // unguessable id (the /w/[id] share link), never via a public feed.
+        public: false,
       })
       .select("id")
       .single();
