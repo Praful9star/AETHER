@@ -1,21 +1,17 @@
-import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 
 export const revalidate = 60;
 
-async function getPublicWhispers() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return [];
-
-  const supabase = createClient(url, key);
-  const { data } = await supabase
-    .from("whispers")
-    .select("id,whisper,palette,form,energy,created_at")
-    .eq("public", true)
-    .order("created_at", { ascending: false })
-    .limit(50);
-  return data ?? [];
+// This page used to list the 50 most recent whispers marked public=true.
+// That flag was, until a recent fix, hardcoded true on every save with no
+// consent UI anywhere in the app — meaning every whisper anyone had ever
+// typed was silently public and browsable here. /api/save now defaults to
+// private, but rows written before that fix are still public=true in the
+// database, and this page would keep surfacing them. There's no informed
+// opt-in "share to a public wall" flow to reinstate this against, so it
+// stays empty rather than exposing content nobody knowingly made public.
+async function getPublicWhispers(): Promise<{ id: string; whisper: string; palette: string[]; form: string; energy: number; created_at: string }[]> {
+  return [];
 }
 
 export default async function VoidPage() {
