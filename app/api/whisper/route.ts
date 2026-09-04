@@ -1,5 +1,29 @@
 import Groq from "groq-sdk";
 
+// Minimal in-memory rate limit — this endpoint had none at all, meaning any
+// caller (script, bot, or just an impatient tab) could spam an LLM call with
+// zero throttle, unbounded against a paid API. In-memory means it resets on
+// cold start and is per-instance rather than global, but on Vercel's default
+// runtime it still catches the actual failure mode (a burst from one client)
+// without pulling in an external store for what should be a cheap guardrail.
+const RATE_LIMIT = 12;       // requests
+const RATE_WINDOW_MS = 60_000; // per rolling minute, per IP
+const hits = new Map<string, number[]>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const timestamps = (hits.get(ip) ?? []).filter(t => now - t < RATE_WINDOW_MS);
+  timestamps.push(now);
+  hits.set(ip, timestamps);
+  if (hits.size > 5000) { // bound memory under sustained abuse from many IPs
+    const cutoff = now - RATE_WINDOW_MS;
+    Array.from(hits.entries()).forEach(([k, v]) => {
+      if (!v.some((t: number) => t > cutoff)) hits.delete(k);
+    });
+  }
+  return timestamps.length > RATE_LIMIT;
+}
+
 const FORMS = [
   "spiral", "barred", "elliptical", "ring", "merger",
   "quasar", "supernova", "filament", "hourglass", "tidal",
@@ -98,9 +122,21 @@ Reply with ONLY raw JSON:
 JSON only. No markdown. No explanation. No wrapper text.`;
 
 export async function POST(req: Request) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    ?? req.headers.get("x-real-ip")
+    ?? "unknown";
+  if (isRateLimited(ip)) {
+    return Response.json(
+      { ...buildFallback("cosmos"), whisper: "The cosmos needs a moment to breathe. Try again shortly." },
+      { status: 429 },
+    );
+  }
+
+  let thought = "cosmos";
   try {
-    const { thought } = await req.json();
-    const sanitized = String(thought ?? "").slice(0, 200);
+    const body = await req.json();
+    thought = String(body?.thought ?? "cosmos");
+    const sanitized = thought.slice(0, 200);
 
     const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const completion = await client.chat.completions.create({
@@ -130,7 +166,13 @@ export async function POST(req: Request) {
       energy: Math.max(0, Math.min(1, Number(json.energy) || 0.5)),
     });
   } catch (err) {
-    const { thought } = await req.clone().json().catch(() => ({ thought: "cosmos" }));
-    return Response.json(buildFallback(String(thought ?? "cosmos")));
+    // Groq being down/rate-limited/returning malformed JSON must never
+    // surface as a raw 500 — this fallback exists specifically so a failed
+    // AI call still produces a whisper. (It previously tried to re-read the
+    // request body here via req.clone(), but by this point req.json() in
+    // the try block had already consumed the stream, so clone() itself threw
+    // "TypeError: unusable" — the fallback path crashed exactly when it was
+    // needed most. Now it just reuses `thought`, captured before the call.)
+    return Response.json(buildFallback(thought));
   }
 }
