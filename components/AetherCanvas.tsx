@@ -192,6 +192,15 @@ function lerp3(c0: number[], c1: number[], c2: number[], t: number): [number,num
 function rn() { return (Math.random()+Math.random()+Math.random()-1.5)*0.9; }
 function hashStr(s: string) { let h=0; for (let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))|0; return Math.abs(h); }
 
+function relativeDay(id: number): string {
+  const days=Math.floor((Date.now()-id)/86400000);
+  if (days<=0) return "TODAY";
+  if (days===1) return "YESTERDAY";
+  if (days<7) return days+" DAYS AGO";
+  if (days<30) return Math.floor(days/7)+"W AGO";
+  return Math.floor(days/30)+"MO AGO";
+}
+
 function hexHue(hex: string): number {
   const h=(hex||"").replace("#","");
   if (h.length<6) return 0;
@@ -1411,6 +1420,10 @@ export default function AetherCanvas() {
   const [explore,      setExplore]      = useState(false);
   const [zen,          setZen]          = useState(false);
   const [firstContact, setFirstContact] = useState(false);
+  const [skyMode,      setSkyMode]      = useState(false);
+  const [selectedStar, setSelectedStar] = useState<SavedStar|null>(null);
+  const skyModeRef = useRef(false);
+  useEffect(()=>{ skyModeRef.current=skyMode; },[skyMode]);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1628,6 +1641,10 @@ export default function AetherCanvas() {
     // space — the boot sequence still dollies in from radius:150, so the
     // arrival reveal is now more dramatic, not less.
     const cam={theta:0.6,phi:1.15,radius:150,targetRadius:38,lastInput:performance.now()};
+    // "Explore your sky" — pulls the camera back to frame the whole saved
+    // constellation and slows the drift to something contemplative, rather
+    // than the usual idle-rotate. Toggled via sceneRef.current.setSkyMode().
+    let skyModeOn=false, skyPrevRadius=38;
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -1972,6 +1989,21 @@ export default function AetherCanvas() {
         composer.render();
         return url;
       },
+      setSkyMode(on:boolean) {
+        skyModeOn=on;
+        if (on) {
+          skyPrevRadius=cam.targetRadius;
+          let maxR=42;
+          starsRef.current.forEach(s=>{
+            const d=Math.hypot(s.pos[0],s.pos[1],s.pos[2]);
+            if (d>maxR) maxR=d;
+          });
+          cam.targetRadius=Math.max(55,Math.min(130,maxR+30));
+        } else {
+          cam.targetRadius=skyPrevRadius;
+        }
+        cam.lastInput=performance.now();
+      },
     };
 
     const onResize=()=>{
@@ -2028,8 +2060,8 @@ export default function AetherCanvas() {
       burst=Math.max(0,burst-1.2*dt);
 
       cam.radius+=(cam.targetRadius-cam.radius)*(1-Math.exp(-2.8*dt));
-      // Screensaver: faster auto-rotate
-      const rotSpeed=saverArmed?0.18:0.04;
+      // Screensaver: faster auto-rotate. Sky mode: slower, contemplative drift.
+      const rotSpeed=skyModeOn?0.014:(saverArmed?0.18:0.04);
       if (!dragging&&!reducedMotion&&now-cam.lastInput>2500) cam.theta+=rotSpeed*dt;
       updateCam(now);
 
@@ -2056,9 +2088,12 @@ export default function AetherCanvas() {
         points.rotation.y=spin;
       }
       bgStars.rotation.y=spin*0.06;
-      memPoints.rotation.y=spin*0.12;
-      memLines.rotation.y=spin*0.12;
-      memLineMat.opacity=0.14+Math.sin(t*0.7)*0.07;
+      // Sky mode holds the constellation still (only camera orbit moves it)
+      // so browsing your own stars feels like reading a fixed map, not
+      // chasing a drifting one — and the connecting lines come forward.
+      memPoints.rotation.y=skyModeOn?0:spin*0.12;
+      memLines.rotation.y=skyModeOn?0:spin*0.12;
+      memLineMat.opacity=skyModeOn?0.55+Math.sin(t*0.7)*0.12:0.14+Math.sin(t*0.7)*0.07;
       nebulaGroup.rotation.y=-spin*0.045;
       dust.rotation.y=-spin*0.22;
       dust.rotation.x=Math.sin(t*0.05)*0.1;
@@ -2429,9 +2464,25 @@ export default function AetherCanvas() {
     lastEnergy.current=s.energy;
     if (audioRef.current) audioRef.current.transition(s.form,s.energy);
     showMorphLabel(s.form); setPanel(false);
+    // Becoming a past galaxy replaces the whole view — sky mode's wide,
+    // held-still framing no longer makes sense once that happens.
+    if (skyModeRef.current) { setSkyMode(false); sceneRef.current.setSkyMode?.(false); }
+    setSelectedStar(null);
   },[showMorphLabel]);
 
-  useEffect(()=>{sceneRef.current.onStarTap=(i:number)=>{const s=starsRef.current[i];if(s)revisit(s);};});
+  const toggleSkyMode=useCallback(()=>{
+    setSkyMode(on=>{
+      const next=!on;
+      setPanel(false); setExplore(false); setSelectedStar(null);
+      sceneRef.current.setSkyMode?.(next);
+      return next;
+    });
+  },[]);
+
+  useEffect(()=>{sceneRef.current.onStarTap=(i:number)=>{
+    const s=starsRef.current[i]; if (!s) return;
+    if (skyModeRef.current) setSelectedStar(s); else revisit(s);
+  };});
 
   const capture=()=>{ try{setCaptureURL(sceneRef.current.snapshot?.(whisper)??null);}catch{} };
 
@@ -2589,7 +2640,12 @@ export default function AetherCanvas() {
   // Global keyboard shortcuts (ignored while typing in the whisper box)
   useEffect(()=>{
     const onKey=(e:KeyboardEvent)=>{
-      if (e.key==="Escape") { setZen(false); setExplore(false); setPanel(false); setCaptureURL(null); return; }
+      if (e.key==="Escape") {
+        setZen(false); setExplore(false); setPanel(false); setCaptureURL(null);
+        if (skyModeRef.current) { setSkyMode(false); sceneRef.current.setSkyMode?.(false); }
+        setSelectedStar(null);
+        return;
+      }
       const el=document.activeElement;
       if (el&&(el.tagName==="TEXTAREA"||el.tagName==="INPUT")) return;
       if (e.metaKey||e.ctrlKey||e.altKey) return;
@@ -2681,12 +2737,13 @@ export default function AetherCanvas() {
         {([
           ["SOUND · "+(sound?"ON":"OFF"),toggleSound],
           ["STARS · "+count,()=>setPanel(p=>!p)],
+          ...(count>0?[[skyMode?"✕ EXIT SKY":"MY SKY",toggleSkyMode] as [string,()=>void]]:[]),
           ["EXPLORE · "+FORMS.length,()=>setExplore(e=>!e)],
           ["ZEN MODE",()=>setZen(true)],
           ["CAPTURE ✦",capture],
         ] as [string,()=>void][]).map(([label,fn])=>(
           <button key={label} onClick={fn}
-            style={{display:"block",background:"none",border:"none",color:"rgba(214,210,245,.6)",fontSize:10,letterSpacing:"0.2em",padding:"5px 0",cursor:"pointer",textAlign:"right",fontFamily:"inherit"}}>
+            style={{display:"block",background:"none",border:"none",color:skyMode&&label.includes("EXIT")?accentColor:"rgba(214,210,245,.6)",fontSize:10,letterSpacing:"0.2em",padding:"5px 0",cursor:"pointer",textAlign:"right",fontFamily:"inherit"}}>
             {label}
           </button>
         ))}
@@ -2879,6 +2936,49 @@ export default function AetherCanvas() {
                 </button>
               </>
             )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Sky mode — hint banner + tap-to-preview star caption */}
+      <AnimatePresence>
+        {skyMode&&(
+          <motion.div
+            initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
+            style={{position:"absolute",left:0,right:0,top:20,display:"flex",justifyContent:"center",pointerEvents:"none",zIndex:4}}
+          >
+            <div style={{background:"rgba(9,6,18,.88)",border:`1px solid ${a44}`,borderRadius:999,padding:"8px 20px",fontSize:10.5,letterSpacing:"0.16em",color:"rgba(222,217,247,.85)",textAlign:"center"}}>
+              EXPLORING YOUR SKY · every star sits where its feeling belongs · tap one to remember it
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {skyMode&&selectedStar&&(
+          <motion.div
+            initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} exit={{opacity:0,y:16}}
+            style={{position:"absolute",left:0,right:0,bottom:96,display:"flex",justifyContent:"center",padding:"0 18px",zIndex:4}}
+          >
+            <div style={{background:"rgba(9,6,18,.95)",border:`1px solid ${selectedStar.palette[2]||a44}`,borderRadius:16,padding:"16px 20px",maxWidth:440,boxShadow:`0 8px 30px rgba(0,0,0,.5), 0 0 24px ${selectedStar.palette[2]}33`}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{width:8,height:8,borderRadius:8,background:selectedStar.palette[2],boxShadow:`0 0 10px ${selectedStar.palette[2]}`,display:"inline-block",flexShrink:0}}/>
+                <span style={{color:selectedStar.palette[2],fontSize:9,letterSpacing:"0.24em"}}>{FORM_LABELS[selectedStar.form]??selectedStar.form.toUpperCase()}</span>
+                <span style={{color:"rgba(200,196,235,.35)",fontSize:9,letterSpacing:"0.1em",marginLeft:"auto"}}>{relativeDay(selectedStar.id)}</span>
+              </div>
+              <div style={{color:"#ece8ff",fontSize:15,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",lineHeight:1.5,marginBottom:14}}>
+                “{selectedStar.whisper}”
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>revisit(selectedStar)}
+                  style={{flex:1,background:`linear-gradient(135deg,${a44},${a66}33)`,border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:"9px 12px",fontSize:9.5,letterSpacing:"0.16em",cursor:"pointer",fontFamily:"inherit"}}>
+                  ✦ BECOME THIS GALAXY
+                </button>
+                <button onClick={()=>setSelectedStar(null)}
+                  style={{background:"none",border:"1px solid rgba(200,196,235,.24)",color:"rgba(200,196,235,.6)",borderRadius:999,padding:"9px 14px",fontSize:9.5,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"inherit"}}>
+                  CLOSE
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
