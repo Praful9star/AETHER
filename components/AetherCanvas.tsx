@@ -7,6 +7,9 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -213,9 +216,13 @@ function makeLabelSprite(text: string): THREE.Sprite {
   ctx.fillText(spaced,c.width/2,c.height/2);
   const tex=new THREE.CanvasTexture(c);
   tex.needsUpdate=true;
-  const mat=new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0,depthWrite:false,depthTest:false});
+  const mat=new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0,depthWrite:false,depthTest:false,sizeAttenuation:false});
   const sprite=new THREE.Sprite(mat);
-  sprite.scale.set(15,15*(96/512),1);
+  // sizeAttenuation:false makes this a fixed *screen-space* size (in the
+  // ~0.01-scale units SpriteMaterial uses without attenuation) instead of a
+  // world-space size — so it can never balloon to fill the frame just
+  // because the orbiting camera happens to pass close to it in world space.
+  sprite.scale.set(0.16,0.16*(96/512),1);
   sprite.renderOrder=50;
   return sprite;
 }
@@ -1774,13 +1781,27 @@ export default function AetherCanvas() {
     const memPoints=new THREE.Points(memGeo,memMat);
     scene.add(memPoints);
 
-    // Constellation lines — the emotional journey drawn between memory stars
-    const memLinePos=new Float32Array((CAP-1)*2*3).fill(1e5);
-    const memLineGeo=new THREE.BufferGeometry();
-    memLineGeo.setAttribute("position",new THREE.BufferAttribute(memLinePos,3));
-    memLineGeo.setDrawRange(0,0);
-    const memLineMat=new THREE.LineBasicMaterial({color:0x93a0e0,transparent:true,opacity:0.2,blending:THREE.AdditiveBlending,depthWrite:false});
-    const memLines=new THREE.LineSegments(memLineGeo,memLineMat);
+    // Constellation lines — the emotional journey drawn between memory
+    // stars. Built on LineSegments2/LineMaterial (three's "fat lines"
+    // extension) rather than plain LineSegments: THREE.LineBasicMaterial's
+    // linewidth is silently ignored on almost every GPU/driver combo (a
+    // long-standing WebGL/ANGLE limitation), so no matter how bright the
+    // opacity got, the connectors stayed a barely-visible 1px hairline —
+    // "each thought is well connected" needs real, controllable width.
+    let memLineSegCount=0;
+    const memLineGeo=new LineSegmentsGeometry();
+    const memLineMat=new LineMaterial({
+      vertexColors:true,
+      transparent:true,
+      opacity:0.2,
+      blending:THREE.AdditiveBlending,
+      depthWrite:false,
+      linewidth:2.6, // screen-space pixels
+      worldUnits:false,
+    });
+    memLineMat.resolution.set(mount.clientWidth,mount.clientHeight);
+    const memLines=new LineSegments2(memLineGeo,memLineMat);
+    memLines.visible=false;
     scene.add(memLines);
 
     // Emotional compass — "explore your sky" is a real map, not a random
@@ -1825,7 +1846,7 @@ export default function AetherCanvas() {
     // "Explore your sky" — pulls the camera back to frame the whole saved
     // constellation and slows the drift to something contemplative, rather
     // than the usual idle-rotate. Toggled via sceneRef.current.setSkyMode().
-    let skyModeOn=false, skyPrevRadius=38, dimLevel=1;
+    let skyModeOn=false, skyPrevRadius=38, dimLevel=1, skyBloomMul=1;
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2120,24 +2141,35 @@ export default function AetherCanvas() {
         memGeo.setDrawRange(0,n);
         memGeo.attributes.position.needsUpdate=true;
         memGeo.attributes.color.needsUpdate=true;
-        // Chronological constellation lines
-        for (let i=0;i<CAP-1;i++) {
-          if (i<n-1) {
+        // Chronological constellation lines — rebuilt fresh each time (only
+        // happens when the star list itself changes, not per frame), sized
+        // exactly to the current segment count rather than padded to CAP.
+        memLineSegCount=Math.max(0,n-1);
+        if (memLineSegCount>0) {
+          const segPos=new Float32Array(memLineSegCount*6);
+          const segCol=new Float32Array(memLineSegCount*6);
+          for (let i=0;i<memLineSegCount;i++) {
+            const c0=hexToRGB(arr[i].palette[2]), c1=hexToRGB(arr[i+1].palette[2]);
             for (let k=0;k<3;k++) {
-              memLinePos[i*6+k]  =arr[i].pos[k];
-              memLinePos[i*6+3+k]=arr[i+1].pos[k];
+              segPos[i*6+k]  =arr[i].pos[k];
+              segPos[i*6+3+k]=arr[i+1].pos[k];
+              segCol[i*6+k]  =c0[k];
+              segCol[i*6+3+k]=c1[k];
             }
-          } else {
-            for (let k=0;k<6;k++) memLinePos[i*6+k]=1e5;
           }
+          memLineGeo.setPositions(segPos);
+          memLineGeo.setColors(segCol);
+          memLines.computeLineDistances();
+          memLines.visible=true;
+        } else {
+          memLines.visible=false;
         }
-        memLineGeo.setDrawRange(0,Math.max(0,(n-1)*2));
-        memLineGeo.attributes.position.needsUpdate=true;
       },
       snapshot(whisperText:string) {
         const W=mount.clientWidth,H=mount.clientHeight;
         renderer.setSize(1080,1920); composer.setSize(1080,1920);
         camera.aspect=1080/1920; camera.updateProjectionMatrix();
+        memLineMat.resolution.set(1080,1920);
         composer.render();
         const out=document.createElement("canvas"); out.width=1080; out.height=1920;
         const o=out.getContext("2d")!;
@@ -2167,6 +2199,7 @@ export default function AetherCanvas() {
         const url=out.toDataURL("image/png");
         renderer.setSize(W,H); composer.setSize(W,H);
         camera.aspect=W/H; camera.updateProjectionMatrix();
+        memLineMat.resolution.set(W,H);
         composer.render();
         return url;
       },
@@ -2180,7 +2213,11 @@ export default function AetherCanvas() {
             if (d>maxR) maxR=d;
           });
           cam.targetRadius=Math.max(55,Math.min(130,maxR+30));
-          const compassR=cam.targetRadius*0.86;
+          // Placed well outside the camera's orbit sphere — a horizon ring
+          // around the whole scene, not a marker the camera can wander
+          // into. (Labels are also screen-space sized now, so this is a
+          // layout choice, not a safety requirement.)
+          const compassR=cam.targetRadius*1.3;
           compassSprites.forEach(({place})=>place(compassR));
         } else {
           cam.targetRadius=skyPrevRadius;
@@ -2194,6 +2231,7 @@ export default function AetherCanvas() {
       const w=mountRef.current.clientWidth,h=mountRef.current.clientHeight;
       camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h);
       composer.setSize(w,h);
+      memLineMat.resolution.set(w,h);
     };
     window.addEventListener("resize",onResize);
 
@@ -2435,16 +2473,26 @@ export default function AetherCanvas() {
       memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
       // Fade the active galaxy nearly out in sky mode so the constellation
       // — a fraction of the particle count — actually reads against it.
-      dimLevel+=((skyModeOn?0.05:1)-dimLevel)*(1-Math.exp(-3*dt));
+      dimLevel+=((skyModeOn?0.0:1)-dimLevel)*(1-Math.exp(-3*dt));
       matUniforms.uDim.value=dimLevel;
       coreMat.opacity*=dimLevel;
+      // Additive blending across 40,000 overlapping particles still sums to
+      // a visible haze at a few percent alpha each, and the bloom pass then
+      // smears that haze into exactly the "blurry galaxy still there"
+      // ghost the sky mode was supposed to remove — so once it's faded
+      // close enough to invisible, stop drawing it and the halo core
+      // entirely rather than trusting alpha alone.
+      points.visible=dimLevel>0.015;
+      core.visible=dimLevel>0.015;
+
+      skyBloomMul+=((skyModeOn?0.4:1)-skyBloomMul)*(1-Math.exp(-3*dt));
 
       compassOpacity+=((skyModeOn?0.85:0)-compassOpacity)*(1-Math.exp(-2.4*dt));
       compassSprites.forEach(({sprite})=>{ (sprite.material as THREE.SpriteMaterial).opacity=compassOpacity; });
       matUniforms.uTime.value=t;
       // Tiny crisp particles while spelling so letterforms stay readable
       matUniforms.uSize.value=(0.9+displayEnergy*0.6+aLvl*0.5)*(spelling?0.42:1);
-      bloom.strength=(spelling?0.2:0.3+displayEnergy*0.35+warp*0.35+aLvl*0.3)*qBloomMul;
+      bloom.strength=(spelling?0.2:0.3+displayEnergy*0.35+warp*0.35+aLvl*0.3)*qBloomMul*skyBloomMul;
       (afterimage.uniforms as any).damp.value=spelling?0.05:Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
       cinematic.uniforms.uTime.value=t;
       cinematic.uniforms.uWarp.value=Math.sin(warp*Math.PI);
