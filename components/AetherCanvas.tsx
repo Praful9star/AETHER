@@ -1376,6 +1376,7 @@ export default function AetherCanvas() {
   const [screensaver,  setScreensaver]  = useState(false);
   const [voiceActive,  setVoiceActive]  = useState(false);
   const [hasVoice,     setHasVoice]     = useState(false);
+  const [voiceHint,    setVoiceHint]    = useState(false);
   const [streak,       setStreak]       = useState(0);
   const [shareId,      setShareId]      = useState<string|null>(null);
   const [copied,       setCopied]       = useState(false);
@@ -2487,13 +2488,7 @@ export default function AetherCanvas() {
     } catch {}
   },[shareId,captureURL,whisper]);
 
-  const toggleVoice=useCallback(()=>{
-    if (!hasVoice) return;
-    if (voiceActive) {
-      try{voiceRef.current?.stop();}catch{}
-      setVoiceActive(false);
-      return;
-    }
+  const beginListening=useCallback(()=>{
     const SpeechRec=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;
     if (!SpeechRec) return;
     const rec=new SpeechRec();
@@ -2506,7 +2501,29 @@ export default function AetherCanvas() {
     rec.onerror=()=>setVoiceActive(false);
     rec.onend=()=>setVoiceActive(false);
     try{rec.start(); voiceRef.current=rec; setVoiceActive(true);}catch{setVoiceActive(false);}
-  },[hasVoice,voiceActive]);
+  },[]);
+
+  const toggleVoice=useCallback(()=>{
+    if (!hasVoice) return;
+    if (voiceActive) {
+      try{voiceRef.current?.stop();}catch{}
+      setVoiceActive(false);
+      return;
+    }
+    // First-ever tap: the browser's mic permission prompt otherwise appears
+    // with zero context, which reads as invasive on a product about private
+    // emotional input. Show a one-time explanation, then proceed — every
+    // later tap goes straight to beginListening() as before.
+    let seen=false;
+    try{seen=!!localStorage.getItem("aether_voice_seen");}catch{}
+    if (!seen) {
+      try{localStorage.setItem("aether_voice_seen","1");}catch{}
+      setVoiceHint(true);
+      setTimeout(()=>{ setVoiceHint(false); beginListening(); },1700);
+      return;
+    }
+    beginListening();
+  },[hasVoice,voiceActive,beginListening]);
 
   const wakeFromSaver=useCallback(()=>{ lastActRef.current=performance.now(); setScreensaver(false); },[]);
 
@@ -2685,6 +2702,19 @@ export default function AetherCanvas() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* One-time mic rationale — shown before the browser's own permission
+          prompt, never again after the first tap (localStorage-gated). Plain
+          conditional render, no motion wrapper — this sits directly over the
+          WebGL canvas and a framer-motion opacity animation here proved
+          unreliable to composite correctly. */}
+      {voiceHint&&(
+        <div style={{position:"absolute",left:0,right:0,bottom:86,zIndex:4,display:"flex",justifyContent:"center",padding:"0 18px"}}>
+          <div style={{background:"rgba(9,6,18,.97)",border:`1px solid ${a44}`,borderRadius:14,padding:"9px 18px",fontSize:12.5,color:"rgba(222,217,247,.9)",maxWidth:400,textAlign:"center",lineHeight:1.4,boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
+            Your browser will ask for mic access next — nothing is recorded or saved, it's only turned into text.
+          </div>
+        </div>
+      )}
 
       {/* Input */}
       <div style={{position:"absolute",left:0,right:0,bottom:28,display:"flex",justifyContent:"center",padding:"0 18px",...ui}}>
