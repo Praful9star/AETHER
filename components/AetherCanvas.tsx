@@ -7,8 +7,8 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
-import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
-import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -1781,28 +1781,33 @@ export default function AetherCanvas() {
     const memPoints=new THREE.Points(memGeo,memMat);
     scene.add(memPoints);
 
-    // Constellation lines — the emotional journey drawn between memory
-    // stars. Built on LineSegments2/LineMaterial (three's "fat lines"
-    // extension) rather than plain LineSegments: THREE.LineBasicMaterial's
-    // linewidth is silently ignored on almost every GPU/driver combo (a
-    // long-standing WebGL/ANGLE limitation), so no matter how bright the
-    // opacity got, the connectors stayed a barely-visible 1px hairline —
-    // "each thought is well connected" needs real, controllable width.
-    let memLineSegCount=0;
-    const memLineGeo=new LineSegmentsGeometry();
+    // Constellation thread — one continuous, gently-curved path through
+    // your stars in the order you made them, sky-mode only. Two earlier
+    // attempts both missed: point-to-point straight LineSegments looked
+    // like a tangled web of criss-crossing chords the moment they were
+    // actually visible (stars are placed by emotion, not by chronological
+    // adjacency, so consecutive stars are often on opposite sides of the
+    // sky), and it was leaking onto the default homepage view at any
+    // nonzero opacity. This is Line2/LineGeometry (real pixel width, not
+    // the ignored-on-most-GPUs LineBasicMaterial.linewidth) sampling a
+    // CatmullRomCurve3 through the stars, so it reads as a single soft
+    // thread of fate rather than a scribble — and it is fully invisible
+    // outside sky mode, full stop, not just faint.
+    const memLineGeo=new LineGeometry();
     const memLineMat=new LineMaterial({
       vertexColors:true,
       transparent:true,
-      opacity:0.2,
+      opacity:0,
       blending:THREE.AdditiveBlending,
       depthWrite:false,
-      linewidth:2.6, // screen-space pixels
+      linewidth:1.8, // screen-space pixels
       worldUnits:false,
     });
     memLineMat.resolution.set(mount.clientWidth,mount.clientHeight);
-    const memLines=new LineSegments2(memLineGeo,memLineMat);
+    const memLines=new Line2(memLineGeo,memLineMat);
     memLines.visible=false;
     scene.add(memLines);
+    let memCurveReady=false;
 
     // Emotional compass — "explore your sky" is a real map, not a random
     // scatter of points: azimuth encodes hue (valence-echo) and altitude
@@ -2141,28 +2146,33 @@ export default function AetherCanvas() {
         memGeo.setDrawRange(0,n);
         memGeo.attributes.position.needsUpdate=true;
         memGeo.attributes.color.needsUpdate=true;
-        // Chronological constellation lines — rebuilt fresh each time (only
-        // happens when the star list itself changes, not per frame), sized
-        // exactly to the current segment count rather than padded to CAP.
-        memLineSegCount=Math.max(0,n-1);
-        if (memLineSegCount>0) {
-          const segPos=new Float32Array(memLineSegCount*6);
-          const segCol=new Float32Array(memLineSegCount*6);
-          for (let i=0;i<memLineSegCount;i++) {
-            const c0=hexToRGB(arr[i].palette[2]), c1=hexToRGB(arr[i+1].palette[2]);
-            for (let k=0;k<3;k++) {
-              segPos[i*6+k]  =arr[i].pos[k];
-              segPos[i*6+3+k]=arr[i+1].pos[k];
-              segCol[i*6+k]  =c0[k];
-              segCol[i*6+3+k]=c1[k];
-            }
+        // One continuous curve through the stars in chronological order —
+        // see the comment at memLineGeo's construction for why this
+        // replaced straight point-to-point segments.
+        memCurveReady=n>=2;
+        if (memCurveReady) {
+          const nodeColors=arr.slice(0,n).map(s=>hexToRGB(s.palette[2]));
+          const curve=new THREE.CatmullRomCurve3(
+            arr.slice(0,n).map(s=>new THREE.Vector3(s.pos[0],s.pos[1],s.pos[2])),
+            false,"catmullrom",0.25,
+          );
+          const samples=Math.max(24,(n-1)*14);
+          const pts=curve.getPoints(samples);
+          const segPos=new Float32Array(pts.length*3);
+          const segCol=new Float32Array(pts.length*3);
+          for (let i=0;i<pts.length;i++) {
+            const t=(i/samples)*(n-1);
+            const seg=Math.min(n-2,Math.floor(t));
+            const frac=t-seg;
+            const c0=nodeColors[seg], c1=nodeColors[seg+1];
+            segPos[i*3]=pts[i].x; segPos[i*3+1]=pts[i].y; segPos[i*3+2]=pts[i].z;
+            segCol[i*3]  =c0[0]+(c1[0]-c0[0])*frac;
+            segCol[i*3+1]=c0[1]+(c1[1]-c0[1])*frac;
+            segCol[i*3+2]=c0[2]+(c1[2]-c0[2])*frac;
           }
           memLineGeo.setPositions(segPos);
           memLineGeo.setColors(segCol);
           memLines.computeLineDistances();
-          memLines.visible=true;
-        } else {
-          memLines.visible=false;
         }
       },
       snapshot(whisperText:string) {
@@ -2314,7 +2324,8 @@ export default function AetherCanvas() {
       // chasing a drifting one — and the connecting lines come forward.
       memPoints.rotation.y=skyModeOn?0:spin*0.12;
       memLines.rotation.y=skyModeOn?0:spin*0.12;
-      memLineMat.opacity=skyModeOn?0.55+Math.sin(t*0.7)*0.12:0.14+Math.sin(t*0.7)*0.07;
+      memLines.visible=skyModeOn&&memCurveReady;
+      memLineMat.opacity=0.5+Math.sin(t*0.7)*0.12;
       nebulaGroup.rotation.y=-spin*0.045;
       dust.rotation.y=-spin*0.22;
       dust.rotation.x=Math.sin(t*0.05)*0.1;
