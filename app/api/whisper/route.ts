@@ -116,8 +116,10 @@ NEWEST 4:
 
 MAP THE HUMAN'S THOUGHT to whichever form best captures its emotional essence. Then choose a 3-color palette (dark background, mid-tone, luminous accent) that evokes the correct emotional register. Energy should reflect the intensity — quiet contemplation is 0.1, cosmic revelation is 0.95.
 
+The "whisper" line is the one thing the human will actually read back — it must sound like it was written FOR this specific thought, not a generic cosmic aphorism that could follow any input. Ground it in a concrete image, word, or detail actually present in what they wrote — reflect their specific situation back through a cosmic lens, don't paraphrase generic profundity at them. Two different thoughts should never plausibly produce the same or similar-sounding line. Never use the literal words "your thought" — refer to what they actually said.
+
 Reply with ONLY raw JSON:
-{"whisper": "<profound poetic line, max 26 words, no clichés>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], "form": "<one of the 34 form names>", "energy": <0.0-1.0>}
+{"whisper": "<one line, max 26 words, grounded in a specific detail from their exact thought, no clichés, no generic cosmic aphorisms>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], "form": "<one of the 34 form names>", "energy": <0.0-1.0>}
 
 JSON only. No markdown. No explanation. No wrapper text.`;
 

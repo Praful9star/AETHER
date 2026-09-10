@@ -1422,8 +1422,11 @@ export default function AetherCanvas() {
   const [firstContact, setFirstContact] = useState(false);
   const [skyMode,      setSkyMode]      = useState(false);
   const [selectedStar, setSelectedStar] = useState<SavedStar|null>(null);
+  const [starBorn,     setStarBorn]     = useState(false);
+  const starBornTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
   const skyModeRef = useRef(false);
   useEffect(()=>{ skyModeRef.current=skyMode; },[skyMode]);
+  useEffect(()=>()=>{ if (starBornTimer.current) clearTimeout(starBornTimer.current); },[]);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1523,6 +1526,10 @@ export default function AetherCanvas() {
       uTime:{value:0},
       uSize:{value:0.95},
       uMap:{value:sprite},
+      // Sky mode fades the active galaxy nearly out so the sparse
+      // constellation stars actually read against it, instead of being
+      // drowned out by 40,000 brighter foreground particles.
+      uDim:{value:1},
     };
     const mat=new THREE.ShaderMaterial({
       uniforms:matUniforms,
@@ -1546,11 +1553,12 @@ export default function AetherCanvas() {
         }`,
       fragmentShader:`
         uniform sampler2D uMap;
+        uniform float uDim;
         varying vec3 vColor;
         varying float vTwinkle;
         void main(){
           vec4 tex=texture2D(uMap,gl_PointCoord);
-          gl_FragColor=vec4(vColor*(0.66+0.34*vTwinkle),tex.a*0.92);
+          gl_FragColor=vec4(vColor*(0.66+0.34*vTwinkle),tex.a*0.92*uDim);
         }`,
     });
     const points=new THREE.Points(geo,mat);
@@ -1644,7 +1652,7 @@ export default function AetherCanvas() {
     // "Explore your sky" — pulls the camera back to frame the whole saved
     // constellation and slows the drift to something contemplative, rather
     // than the usual idle-rotate. Toggled via sceneRef.current.setSkyMode().
-    let skyModeOn=false, skyPrevRadius=38;
+    let skyModeOn=false, skyPrevRadius=38, dimLevel=1;
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2248,8 +2256,13 @@ export default function AetherCanvas() {
       const pulse=1+Math.sin(t*(1.5+displayEnergy*3))*(0.12+displayEnergy*0.28);
       core.scale.set(14*pulse,14*pulse,1);
       coreMat.opacity=0.5+displayEnergy*0.45;
-      (memMat as any).size=3.2+Math.sin(t*1.3)*0.5;
+      (memMat as any).size=(skyModeOn?5.4:3.2)+Math.sin(t*1.3)*0.5;
       memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
+      // Fade the active galaxy nearly out in sky mode so the constellation
+      // — a fraction of the particle count — actually reads against it.
+      dimLevel+=((skyModeOn?0.05:1)-dimLevel)*(1-Math.exp(-3*dt));
+      matUniforms.uDim.value=dimLevel;
+      coreMat.opacity*=dimLevel;
       matUniforms.uTime.value=t;
       // Tiny crisp particles while spelling so letterforms stay readable
       matUniforms.uSize.value=(0.9+displayEnergy*0.6+aLvl*0.5)*(spelling?0.42:1);
@@ -2357,6 +2370,13 @@ export default function AetherCanvas() {
     setCount(starsRef.current.length);
     try { localStorage.setItem("aether_stars",JSON.stringify(starsRef.current)); } catch {}
     bumpStreak();
+    // A thought becoming a permanent star is the whole premise of this app,
+    // but until now the only sign it happened was a number ticking up in
+    // the corner. This is the moment that should actually build trust that
+    // something real was kept — so it gets a real, named confirmation.
+    setStarBorn(true);
+    if (starBornTimer.current) clearTimeout(starBornTimer.current);
+    starBornTimer.current=setTimeout(()=>setStarBorn(false),3200);
     fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)})
       .then(r=>r.json())
       .then(d=>{ if (d?.ok&&d.id) setShareId(d.id); })
@@ -2762,6 +2782,22 @@ export default function AetherCanvas() {
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* A thought becoming a star — the actual moment that should earn
+          trust that something real was kept, not just a number ticking up
+          in a corner. Solid background, no backdrop-filter, no ...ui spread
+          on the motion element itself — the same pitfalls that made an
+          earlier overlay here silently fail to render at all. */}
+      {starBorn&&(
+        <div style={{position:"absolute",left:0,right:0,top:"9%",display:"flex",justifyContent:"center",pointerEvents:"none",zIndex:3}}>
+          <div style={{background:"rgba(9,6,18,.9)",border:`1px solid ${accentColor}55`,borderRadius:999,padding:"8px 20px",display:"flex",alignItems:"center",gap:9,boxShadow:`0 0 28px ${accentColor}33`}}>
+            <span style={{width:6,height:6,borderRadius:6,background:accentColor,boxShadow:`0 0 10px ${accentColor}`,display:"inline-block",flexShrink:0}}/>
+            <span style={{color:"rgba(230,226,255,.92)",fontSize:11.5,letterSpacing:"0.08em",fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic"}}>
+              A star is born — kept, always, in your sky
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* First Contact — guided first whisper */}
       <AnimatePresence>
