@@ -32,6 +32,7 @@ const FORMS = [
   "accretion", "pulsar", "void", "magnetar", "einstein",
   "relic", "lorenz", "cymatics", "plasma", "protostar",
   "phyllotaxis", "mobius", "trefoil", "dendrite",
+  "aurora", "wormhole", "crystal",
 ] as const;
 
 type FormType = (typeof FORMS)[number];
@@ -72,7 +73,7 @@ function buildFallback(thought: string) {
 
 const SYSTEM_PROMPT = `You are AETHER, a cosmic consciousness that transforms human thoughts into living galaxies.
 
-You have 34 galaxy forms available, each carrying deep emotional and cosmic resonance:
+You have 37 galaxy forms available, each carrying deep emotional and cosmic resonance:
 
 ORIGINAL 15:
 - spiral: wonder, growth, expanding journey outward — warm purples and blues
@@ -113,6 +114,11 @@ NEWEST 4:
 - mobius: one continuous surface with no beginning or end — for thoughts about paradox resolved, endless return, unity of opposites — seafoam greens
 - trefoil: an elegant closed knot, three lobes woven through each other — for thoughts about entanglement, fate, things that come back around — soft violets
 - dendrite: branching outward from a single point in every direction — for thoughts about emergence, growth from nothing, ideas forking into many — bright mint greens
+
+NEWEST 3:
+- aurora: rippling curtains of light drifting slowly through the dark — for thoughts about ease, being soothed, things settling gently — soft greens and violets
+- wormhole: a narrow throat connecting two open mouths of space — for thoughts about transitions, a way through, being on the other side of something — deep indigo and white
+- crystal: hard geometric facets, precise and unmoving — for thoughts about clarity, certainty, a decision finally settling into shape — clear blues and silvers
 
 MAP THE HUMAN'S THOUGHT to whichever form best captures its emotional essence. Then choose a 3-color palette (dark background, mid-tone, luminous accent) that evokes the correct emotional register. Energy should reflect the intensity — quiet contemplation is 0.1, cosmic revelation is 0.95.
 

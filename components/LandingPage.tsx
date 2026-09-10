@@ -463,7 +463,7 @@ const PLANS = [
     price: "$9",
     cycle: "per month",
     color: "#ff88aa",
-    blurb: "Unlimited whispers, all thirty-four forms, full spatial audio, 4K capture, custom palettes.",
+    blurb: "Unlimited whispers, all thirty-seven forms, full spatial audio, 4K capture, custom palettes.",
   },
   {
     tier: "ETERNAL",
@@ -606,7 +606,7 @@ export default function LandingPage() {
         <div style={{ display: "flex", animation: "aether-ticker-l 44s linear infinite", whiteSpace: "nowrap" }}>
           {[0, 1].map(k => (
             <span key={k} style={{ display: "inline-flex", alignItems: "center" }}>
-              {["40,000 PARTICLES", "34 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
+              {["40,000 PARTICLES", "37 GALAXY FORMS", "SPATIAL AUDIO ENGINE", "AI-POWERED COSMOS", "3D REAL-TIME MORPH", "CONSTELLATION MEMORY", "LIVE SOUNDSCAPES", "WHISPER TO THE VOID"].map(item => (
                 <span key={item} style={{ color: "rgba(200,196,235,0.3)", fontSize: 9.5, letterSpacing: "0.38em", paddingRight: "3.5em", display: "inline-block" }}>
                   {item} <span style={{ color: "#b892ff55" }}>·</span>
                 </span>
@@ -769,7 +769,7 @@ export default function LandingPage() {
 
         {/* Instrumentation — numbers as discovered metadata, not announced stats */}
         <div style={{ borderTop: L, padding: "26px 28px", textAlign: "center", display: "flex", justifyContent: "center", gap: isMobile ? 16 : 32, flexWrap: "wrap" }}>
-          {["~40,000 PARTICLES", "34 FORMS", "REAL-TIME"].map(s => (
+          {["~40,000 PARTICLES", "37 FORMS", "REAL-TIME"].map(s => (
             <span key={s} style={{ color: "rgba(200,196,235,0.24)", fontSize: 9, letterSpacing: "0.3em" }}>{s}</span>
           ))}
         </div>

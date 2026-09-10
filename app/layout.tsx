@@ -35,7 +35,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
   title: "AETHER — A Whisper to the Void",
   description:
-    "Whisper a thought and watch it become a galaxy. An AI-powered living cosmos of 40,000 particles, 34 galaxy forms, spatial audio, and your personal constellation of memories.",
+    "Whisper a thought and watch it become a galaxy. An AI-powered living cosmos of 40,000 particles, 37 galaxy forms, spatial audio, and your personal constellation of memories.",
   keywords: [
     "aether", "galaxy", "cosmos", "AI art", "generative art", "particle universe",
     "emotional journal", "interactive art", "3D", "webgl", "meditation",

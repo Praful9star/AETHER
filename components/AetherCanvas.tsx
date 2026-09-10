@@ -24,6 +24,7 @@ const FORMS = [
   "accretion", "pulsar", "void", "magnetar", "einstein",
   "relic", "lorenz", "cymatics", "plasma", "protostar",
   "phyllotaxis", "mobius", "trefoil", "dendrite",
+  "aurora", "wormhole", "crystal",
 ] as const;
 type FormType = (typeof FORMS)[number];
 
@@ -62,6 +63,9 @@ const FORM_LABELS: Record<FormType, string> = {
   mobius:      "MÖBIUS RING",
   trefoil:     "TREFOIL KNOT",
   dendrite:    "COSMIC DENDRITE",
+  aurora:      "AURORAL CURTAIN",
+  wormhole:    "GRAVITATIONAL WORMHOLE",
+  crystal:     "CRYSTALLINE LATTICE",
 };
 
 // Idle signature motion — each listed form breathes at its own rhythm instead
@@ -88,6 +92,9 @@ const FORM_SIGNATURE: Partial<Record<FormType,{freqMul:number;ampMul:number}>> =
   mobius:      {freqMul:1.7,  ampMul:0.75}, // continuous twisting flow along the ribbon
   trefoil:     {freqMul:1.1,  ampMul:0.55}, // smooth, continuous, self-returning motion
   dendrite:    {freqMul:2.1,  ampMul:0.5},  // fine branching jitter, never quite still
+  aurora:      {freqMul:0.7,  ampMul:1.6},  // slow, wide, curtain-like sway
+  wormhole:    {freqMul:1.4,  ampMul:0.35}, // tight, held taut by the throat
+  crystal:     {freqMul:0.35, ampMul:0.3},  // rigid, barely breathing facets
 };
 
 // Transition violence — how hard a galaxy destabilizes when arriving at
@@ -101,6 +108,7 @@ const TRANSITION_VIOLENCE: Partial<Record<FormType,number>> = {
   merger: 1.5, plasma: 1.6, pulsar: 1.4,
   void: 0.35, sphere: 0.4, relic: 0.4, cymatics: 0.3, elliptical: 0.5,
   phyllotaxis: 0.45, protostar: 0.55, trefoil: 0.5, dendrite: 1.3,
+  wormhole: 1.5, aurora: 0.5, crystal: 0.4,
 };
 
 const FALLBACK_PALETTES: [string, string, string][] = [
@@ -187,6 +195,29 @@ function hexToRGB(hex: string): [number, number, number] {
 function lerp3(c0: number[], c1: number[], c2: number[], t: number): [number,number,number] {
   if (t < 0.5) { const k=t*2; return [c0[0]+(c1[0]-c0[0])*k, c0[1]+(c1[1]-c0[1])*k, c0[2]+(c1[2]-c0[2])*k]; }
   const k=(t-0.5)*2; return [c1[0]+(c2[0]-c1[0])*k, c1[1]+(c2[1]-c1[1])*k, c1[2]+(c2[2]-c1[2])*k];
+}
+
+function makeLabelSprite(text: string): THREE.Sprite {
+  // A drawn text label used as the compass ring in "explore your sky" —
+  // canvas-rasterized once at creation, not a DOM element, so it billboards
+  // in true 3D space and costs nothing per frame.
+  const c=document.createElement("canvas");
+  c.width=512; c.height=96;
+  const ctx=c.getContext("2d")!;
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.font="300 34px Georgia, serif";
+  ctx.fillStyle="rgba(226,220,255,0.92)";
+  ctx.shadowColor="rgba(180,150,255,0.65)"; ctx.shadowBlur=18;
+  const spaced=text.split("").join(" ");
+  ctx.fillText(spaced,c.width/2,c.height/2);
+  const tex=new THREE.CanvasTexture(c);
+  tex.needsUpdate=true;
+  const mat=new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0,depthWrite:false,depthTest:false});
+  const sprite=new THREE.Sprite(mat);
+  sprite.scale.set(15,15*(96/512),1);
+  sprite.renderOrder=50;
+  return sprite;
 }
 
 function rn() { return (Math.random()+Math.random()+Math.random()-1.5)*0.9; }
@@ -829,6 +860,90 @@ function genDendrite(arr: Float32Array, N: number) {
   }
 }
 
+function genAurora(arr: Float32Array, N: number) {
+  // Rippling curtains, not a disc or sphere — several vertical sheets of
+  // light draped around the core, each waving independently like real
+  // aurora curtains. Reads as fabric hanging in space, unmistakably unlike
+  // anything else in the set.
+  const curtains=5;
+  const perCurtain=Math.ceil(N/curtains);
+  for (let c=0;c<curtains;c++) {
+    const base=(c/curtains)*Math.PI*2+rn()*0.3;
+    const arc=0.9+Math.random()*0.4;
+    const freq=1.6+Math.random()*1.2, phase=Math.random()*Math.PI*2;
+    const freq2=2.2+Math.random()*1.4, phase2=Math.random()*Math.PI*2;
+    for (let k=0;k<perCurtain;k++) {
+      const i=c*perCurtain+k;
+      if (i>=N) break;
+      const s=k/perCurtain;
+      const angle=base+(s-0.5)*arc;
+      const r=MAXR*0.72+Math.sin(s*freq+phase)*MAXR*0.16;
+      const h=(Math.random()-0.5)*2;
+      const drift=Math.sin(s*freq2+phase2)*3.4;
+      arr[i*3]  =Math.cos(angle)*r+rn()*0.5;
+      arr[i*3+1]=h*MAXR*0.42+drift+rn()*0.4;
+      arr[i*3+2]=Math.sin(angle)*r+rn()*0.5;
+    }
+  }
+}
+
+function genWormhole(arr: Float32Array, N: number) {
+  // A hyperboloid throat — the textbook wormhole embedding diagram, two
+  // flared mouths pinched into a narrow neck. The sqrt(throat²+(y/a)²)
+  // profile is a true curve, not two joined cones (that's hourglass), so
+  // it reads as one continuous, physically-grounded surface.
+  const throat=MAXR*0.16, a=6.5, L=MAXR*0.92;
+  for (let i=0;i<N;i++) {
+    const y=(Math.random()*2-1)*L;
+    const r=Math.sqrt(throat*throat+(y/a)*(y/a));
+    const theta=Math.random()*Math.PI*2;
+    arr[i*3]  =Math.cos(theta)*r+rn()*0.4;
+    arr[i*3+1]=y+rn()*0.4;
+    arr[i*3+2]=Math.sin(theta)*r+rn()*0.4;
+  }
+}
+
+function genCrystal(arr: Float32Array, N: number) {
+  // Nested icosahedral lattices — hard geometric facets and straight edges,
+  // the opposite of every soft/swirling form in the set. For thoughts about
+  // clarity, structure, decisions crystallizing into place.
+  const PHI=(1+Math.sqrt(5))/2;
+  const base: [number,number,number][] = [
+    [0,1,PHI],[0,-1,PHI],[0,1,-PHI],[0,-1,-PHI],
+    [1,PHI,0],[-1,PHI,0],[1,-PHI,0],[-1,-PHI,0],
+    [PHI,0,1],[-PHI,0,1],[PHI,0,-1],[-PHI,0,-1],
+  ];
+  const edgeLen=2;
+  const edges: [number,number][] = [];
+  for (let i=0;i<base.length;i++) for (let j=i+1;j<base.length;j++) {
+    const dx=base[i][0]-base[j][0], dy=base[i][1]-base[j][1], dz=base[i][2]-base[j][2];
+    if (Math.abs(Math.hypot(dx,dy,dz)-edgeLen)<0.05) edges.push([i,j]);
+  }
+  const shells=3;
+  const segs: {x0:number,y0:number,z0:number,x1:number,y1:number,z1:number}[]=[];
+  for (let sh=0;sh<shells;sh++) {
+    const scale=(MAXR*0.22)*(sh+1.4);
+    const ax=Math.random()*Math.PI*2, ay=Math.random()*Math.PI*2;
+    const rot=(x:number,y:number,z:number): [number,number,number] => {
+      let y1=y*Math.cos(ax)-z*Math.sin(ax), z1=y*Math.sin(ax)+z*Math.cos(ax);
+      let x2=x*Math.cos(ay)-z1*Math.sin(ay), z2=x*Math.sin(ay)+z1*Math.cos(ay);
+      return [x2,y1,z2];
+    };
+    edges.forEach(([i,j])=>{
+      const [x0,y0,z0]=rot(base[i][0]*scale/1.9,base[i][1]*scale/1.9,base[i][2]*scale/1.9);
+      const [x1,y1,z1]=rot(base[j][0]*scale/1.9,base[j][1]*scale/1.9,base[j][2]*scale/1.9);
+      segs.push({x0,y0,z0,x1,y1,z1});
+    });
+  }
+  for (let i=0;i<N;i++) {
+    const seg=segs[Math.floor(Math.random()*segs.length)];
+    const tt=Math.random();
+    arr[i*3]  =seg.x0+(seg.x1-seg.x0)*tt+rn()*0.24;
+    arr[i*3+1]=seg.y0+(seg.y1-seg.y0)*tt+rn()*0.24;
+    arr[i*3+2]=seg.z0+(seg.z1-seg.z0)*tt+rn()*0.24;
+  }
+}
+
 function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array {
   const a=new Float32Array(N*3);
   switch (name) {
@@ -866,6 +981,9 @@ function buildForm(name: FormType, N: number, tArr?: Float32Array): Float32Array
     case "mobius":       genMobius(a, N); break;
     case "trefoil":      genTrefoil(a, N); break;
     case "dendrite":     genDendrite(a, N); break;
+    case "aurora":        genAurora(a, N); break;
+    case "wormhole":      genWormhole(a, N); break;
+    case "crystal":       genCrystal(a, N); break;
   }
   return a;
 }
@@ -1183,6 +1301,7 @@ function makeAudio() {
         accretion:1400, pulsar:300, void:80, magnetar:2400, einstein:2200,
         relic:140, lorenz:600, cymatics:1800, plasma:1600, protostar:400,
         phyllotaxis:1000, mobius:680, trefoil:750, dendrite:1400,
+        aurora:520, wormhole:210, crystal:1200,
       };
       const NF: Record<FormType,number> = {
         spiral:1100, barred:560, elliptical:150, ring:3400,
@@ -1193,6 +1312,7 @@ function makeAudio() {
         accretion:4000, pulsar:500, void:200, magnetar:8000, einstein:3600,
         relic:280, lorenz:1200, cymatics:3000, plasma:5000, protostar:1600,
         phyllotaxis:2600, mobius:1800, trefoil:2100, dendrite:4200,
+        aurora:900, wormhole:260, crystal:3200,
       };
       lp.frequency.setTargetAtTime(LP[form],t,0.8);
       nFilt.frequency.setTargetAtTime(NF[form],t,0.5);
@@ -1365,6 +1485,25 @@ function makeAudio() {
           [0,0.1,0.16,0.24,0.29,0.36,0.4,0.46,0.51].forEach((dt2,i)=>
             tNote(220*Math.pow(1.5,(i%4)),"triangle",t+dt2,0.015,0.6+Math.random()*0.5,v*(0.5-i*0.04)));
           tNote(73.4,"sine",t,0.3,3.0,v*0.45); break;
+
+        case "aurora":
+          // Slow drifting waves of shimmering high harmonics, like light
+          // rippling across a curtain — everything glides, nothing attacks.
+          tGlide(660,880,"sine",t,4.0,v*0.4); tGlide(990,740,"triangle",t+0.6,3.6,v*0.3);
+          tGlide(1320,1100,"sine",t+1.4,3.2,v*0.22);
+          tNote(110,"sine",t,2.0,5.0,v*0.5); break;
+
+        case "wormhole":
+          // A held, taut drone with a slow Doppler-like pitch bend through
+          // the throat — the sound of space itself narrowing and opening.
+          tGlide(220,55,"sine",t,2.6,v*0.9); tGlide(55,220,"sine",t+2.4,2.6,v*0.7);
+          tNoise(t,3.5,v*0.22,900); tNote(27.5,"sine",t,4.0,5.0,v*0.6); break;
+
+        case "crystal":
+          // A perfectly still, bright bell chord — precise and unwavering,
+          // like light refracting through cut facets.
+          [523.2,659.3,784,1046.5,1568].forEach((f,i)=>tNote(f,"triangle",t+i*0.03,0.003,3.0-i*0.15,v*(0.7-i*0.08)));
+          tNote(261.6,"sine",t,0.5,4.0,v*0.4); break;
       }
     },
   };
@@ -1643,6 +1782,40 @@ export default function AetherCanvas() {
     const memLineMat=new THREE.LineBasicMaterial({color:0x93a0e0,transparent:true,opacity:0.2,blending:THREE.AdditiveBlending,depthWrite:false});
     const memLines=new THREE.LineSegments(memLineGeo,memLineMat);
     scene.add(memLines);
+
+    // Emotional compass — "explore your sky" is a real map, not a random
+    // scatter of points: azimuth encodes hue (valence-echo) and altitude
+    // encodes energy (arousal-echo), per the circumplex model the whole
+    // constellation is built on. These labels make that legible instead of
+    // implicit, turning the sky into something closer to a star chart than
+    // a particle field.
+    const compassSectors: {deg:number; label:string}[] = [
+      {deg:0,   label:"PASSION"},
+      {deg:45,  label:"WARMTH"},
+      {deg:90,  label:"JOY"},
+      {deg:135, label:"GROWTH"},
+      {deg:180, label:"CALM"},
+      {deg:225, label:"LONGING"},
+      {deg:270, label:"WONDER"},
+      {deg:315, label:"TENDERNESS"},
+    ];
+    const compassPoles: {sign:number; label:string}[] = [
+      {sign:1,  label:"INTENSITY"},
+      {sign:-1, label:"STILLNESS"},
+    ];
+    const compassSprites: {sprite:THREE.Sprite; place:(r:number)=>void}[] = [];
+    compassSectors.forEach(({deg,label})=>{
+      const sprite=makeLabelSprite(label);
+      const a=(deg/360)*Math.PI*2;
+      compassSprites.push({sprite,place:(r:number)=>sprite.position.set(Math.cos(a)*r,0,Math.sin(a)*r)});
+      scene.add(sprite);
+    });
+    compassPoles.forEach(({sign,label})=>{
+      const sprite=makeLabelSprite(label);
+      compassSprites.push({sprite,place:(r:number)=>sprite.position.set(0,sign*r*0.82,0)});
+      scene.add(sprite);
+    });
+    let compassOpacity=0;
 
     // Resting distance pulled in close so the galaxy is the dominant
     // presence in the frame rather than a small blob adrift in empty
@@ -2007,6 +2180,8 @@ export default function AetherCanvas() {
             if (d>maxR) maxR=d;
           });
           cam.targetRadius=Math.max(55,Math.min(130,maxR+30));
+          const compassR=cam.targetRadius*0.86;
+          compassSprites.forEach(({place})=>place(compassR));
         } else {
           cam.targetRadius=skyPrevRadius;
         }
@@ -2263,6 +2438,9 @@ export default function AetherCanvas() {
       dimLevel+=((skyModeOn?0.05:1)-dimLevel)*(1-Math.exp(-3*dt));
       matUniforms.uDim.value=dimLevel;
       coreMat.opacity*=dimLevel;
+
+      compassOpacity+=((skyModeOn?0.85:0)-compassOpacity)*(1-Math.exp(-2.4*dt));
+      compassSprites.forEach(({sprite})=>{ (sprite.material as THREE.SpriteMaterial).opacity=compassOpacity; });
       matUniforms.uTime.value=t;
       // Tiny crisp particles while spelling so letterforms stay readable
       matUniforms.uSize.value=(0.9+displayEnergy*0.6+aLvl*0.5)*(spelling?0.42:1);
