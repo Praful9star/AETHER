@@ -7,8 +7,8 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
-import { Line2 } from "three/examples/jsm/lines/Line2.js";
-import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -1781,33 +1781,33 @@ export default function AetherCanvas() {
     const memPoints=new THREE.Points(memGeo,memMat);
     scene.add(memPoints);
 
-    // Constellation thread — one continuous, gently-curved path through
-    // your stars in the order you made them, sky-mode only. Two earlier
-    // attempts both missed: point-to-point straight LineSegments looked
-    // like a tangled web of criss-crossing chords the moment they were
-    // actually visible (stars are placed by emotion, not by chronological
-    // adjacency, so consecutive stars are often on opposite sides of the
-    // sky), and it was leaking onto the default homepage view at any
-    // nonzero opacity. This is Line2/LineGeometry (real pixel width, not
-    // the ignored-on-most-GPUs LineBasicMaterial.linewidth) sampling a
-    // CatmullRomCurve3 through the stars, so it reads as a single soft
-    // thread of fate rather than a scribble — and it is fully invisible
-    // outside sky mode, full stop, not just faint.
-    const memLineGeo=new LineGeometry();
+    // Constellation edges — sky-mode only, and deliberately NOT a single
+    // path through the stars in chronological order. Two earlier attempts
+    // at that both produced a tangled scribble across the whole frame,
+    // because stars are placed by emotion, not by when you made them —
+    // thought 3 and thought 4 can sit on opposite sides of the sky, so any
+    // one-path-through-everything approach (straight or curved) is
+    // guaranteed to criss-cross at scale. That was the wrong shape of
+    // connection. Real constellations link stars that are *near each
+    // other*, not stars that happened to occur in sequence — so each star
+    // here connects only to its nearest neighbor(s) within a distance
+    // threshold, forming small local clusters with short, non-crossing
+    // edges. A star with no close neighbor simply gets no line, which is
+    // correct: not every thought belongs to a cluster.
+    const memLineGeo=new LineSegmentsGeometry();
     const memLineMat=new LineMaterial({
-      vertexColors:true,
+      color:0xc7bfff,
       transparent:true,
       opacity:0,
-      blending:THREE.AdditiveBlending,
       depthWrite:false,
-      linewidth:1.8, // screen-space pixels
+      linewidth:1.3, // screen-space pixels — thin and considered, not a glow
       worldUnits:false,
     });
     memLineMat.resolution.set(mount.clientWidth,mount.clientHeight);
-    const memLines=new Line2(memLineGeo,memLineMat);
+    const memLines=new LineSegments2(memLineGeo,memLineMat);
     memLines.visible=false;
     scene.add(memLines);
-    let memCurveReady=false;
+    let memEdgesReady=false;
 
     // Emotional compass — "explore your sky" is a real map, not a random
     // scatter of points: azimuth encodes hue (valence-echo) and altitude
@@ -2146,33 +2146,46 @@ export default function AetherCanvas() {
         memGeo.setDrawRange(0,n);
         memGeo.attributes.position.needsUpdate=true;
         memGeo.attributes.color.needsUpdate=true;
-        // One continuous curve through the stars in chronological order —
-        // see the comment at memLineGeo's construction for why this
-        // replaced straight point-to-point segments.
-        memCurveReady=n>=2;
-        if (memCurveReady) {
-          const nodeColors=arr.slice(0,n).map(s=>hexToRGB(s.palette[2]));
-          const curve=new THREE.CatmullRomCurve3(
-            arr.slice(0,n).map(s=>new THREE.Vector3(s.pos[0],s.pos[1],s.pos[2])),
-            false,"catmullrom",0.25,
-          );
-          const samples=Math.max(24,(n-1)*14);
-          const pts=curve.getPoints(samples);
-          const segPos=new Float32Array(pts.length*3);
-          const segCol=new Float32Array(pts.length*3);
-          for (let i=0;i<pts.length;i++) {
-            const t=(i/samples)*(n-1);
-            const seg=Math.min(n-2,Math.floor(t));
-            const frac=t-seg;
-            const c0=nodeColors[seg], c1=nodeColors[seg+1];
-            segPos[i*3]=pts[i].x; segPos[i*3+1]=pts[i].y; segPos[i*3+2]=pts[i].z;
-            segCol[i*3]  =c0[0]+(c1[0]-c0[0])*frac;
-            segCol[i*3+1]=c0[1]+(c1[1]-c0[1])*frac;
-            segCol[i*3+2]=c0[2]+(c1[2]-c0[2])*frac;
+        // Local nearest-neighbor edges — see the comment at memLineGeo's
+        // construction for why chronological connection was abandoned.
+        // Each star links only to its closest neighbor(s) in space, and
+        // only if that neighbor is close enough to plausibly belong to the
+        // same small cluster — an adaptive threshold, so this works the
+        // same whether you have 3 stars or 120.
+        memEdgesReady=false;
+        if (n>=2) {
+          const pos=arr.slice(0,n).map(s=>s.pos);
+          const nearest=new Float32Array(n).fill(Infinity);
+          const nearestJ=new Int32Array(n).fill(-1);
+          for (let i=0;i<n;i++) {
+            for (let j=0;j<n;j++) {
+              if (i===j) continue;
+              const d=Math.hypot(pos[i][0]-pos[j][0],pos[i][1]-pos[j][1],pos[i][2]-pos[j][2]);
+              if (d<nearest[i]) { nearest[i]=d; nearestJ[i]=j; }
+            }
           }
-          memLineGeo.setPositions(segPos);
-          memLineGeo.setColors(segCol);
-          memLines.computeLineDistances();
+          const sorted=Array.from(nearest).filter(d=>isFinite(d)).sort((a,b)=>a-b);
+          const median=sorted[Math.floor(sorted.length/2)]??0;
+          const threshold=median*1.7;
+          const edges: [number,number][]=[];
+          const seen=new Set<string>();
+          for (let i=0;i<n;i++) {
+            const j=nearestJ[i];
+            if (j<0||nearest[i]>threshold) continue;
+            const key=i<j?`${i}-${j}`:`${j}-${i}`;
+            if (seen.has(key)) continue;
+            seen.add(key); edges.push([i,j]);
+          }
+          if (edges.length>0) {
+            const segPos=new Float32Array(edges.length*6);
+            edges.forEach(([i,j],k)=>{
+              segPos[k*6]  =pos[i][0]; segPos[k*6+1]=pos[i][1]; segPos[k*6+2]=pos[i][2];
+              segPos[k*6+3]=pos[j][0]; segPos[k*6+4]=pos[j][1]; segPos[k*6+5]=pos[j][2];
+            });
+            memLineGeo.setPositions(segPos);
+            memLines.computeLineDistances();
+            memEdgesReady=true;
+          }
         }
       },
       snapshot(whisperText:string) {
@@ -2324,8 +2337,8 @@ export default function AetherCanvas() {
       // chasing a drifting one — and the connecting lines come forward.
       memPoints.rotation.y=skyModeOn?0:spin*0.12;
       memLines.rotation.y=skyModeOn?0:spin*0.12;
-      memLines.visible=skyModeOn&&memCurveReady;
-      memLineMat.opacity=0.5+Math.sin(t*0.7)*0.12;
+      memLines.visible=skyModeOn&&memEdgesReady;
+      memLineMat.opacity=0.28+Math.sin(t*0.7)*0.08;
       nebulaGroup.rotation.y=-spin*0.045;
       dust.rotation.y=-spin*0.22;
       dust.rotation.x=Math.sin(t*0.05)*0.1;
