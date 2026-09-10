@@ -191,8 +191,36 @@ function lerp3(c0: number[], c1: number[], c2: number[], t: number): [number,num
 
 function rn() { return (Math.random()+Math.random()+Math.random()-1.5)*0.9; }
 function hashStr(s: string) { let h=0; for (let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))|0; return Math.abs(h); }
-function starPos(): [number,number,number] {
-  const a=Math.random()*Math.PI*2, b=Math.acos(2*Math.random()-1), r=52+Math.random()*26;
+
+function hexHue(hex: string): number {
+  const h=(hex||"").replace("#","");
+  if (h.length<6) return 0;
+  const r=parseInt(h.slice(0,2),16)/255, g=parseInt(h.slice(2,4),16)/255, b=parseInt(h.slice(4,6),16)/255;
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  if (d===0) return 0;
+  let hue: number;
+  if (max===r) hue=((g-b)/d)%6;
+  else if (max===g) hue=(b-r)/d+2;
+  else hue=(r-g)/d+4;
+  hue*=60;
+  return hue<0?hue+360:hue;
+}
+
+// A remembered star's place in the sky is not random — it's where that
+// moment's emotional register actually sits. Hue of the AI-chosen accent
+// color sets the azimuth (an echo of the valence axis in the psychological
+// circumplex model of affect — warm vs. cool emotional registers land in
+// different wedges of sky); energy sets how close to the pole it sits (an
+// echo of the arousal axis — high-intensity moments cluster near the top,
+// quiet ones settle toward the equator). Whisper enough thoughts and
+// recurring emotional territory becomes visually, spatially obvious —
+// the constellation becomes a real map, not decoration.
+function starPos(accentHex: string, energy: number): [number,number,number] {
+  const hue=hexHue(accentHex);
+  const a=(hue/360)*Math.PI*2+rn()*0.24;
+  const en=Math.max(0,Math.min(1,energy));
+  const b=Math.PI*0.18+(1-en)*Math.PI*0.64+rn()*0.12;
+  const r=52+rn()*10+en*14;
   return [r*Math.sin(b)*Math.cos(a), r*Math.cos(b), r*Math.sin(b)*Math.sin(a)];
 }
 
@@ -2355,7 +2383,7 @@ export default function AetherCanvas() {
     setForm(fm); setAccentColor(pal[2]||"#b892ff"); lastEnergy.current=en;
     if (audioRef.current) audioRef.current.transition(fm,en);
     showMorphLabel(fm);
-    if (save) remember({id:Date.now(),thought:save,whisper:text,palette:pal,form:fm,energy:en,pos:starPos()});
+    if (save) remember({id:Date.now(),thought:save,whisper:text,palette:pal,form:fm,energy:en,pos:starPos(pal[2]||pal[1]||"#b892ff",en)});
     setWhisper(text);
   },[remember,showMorphLabel]);
 
