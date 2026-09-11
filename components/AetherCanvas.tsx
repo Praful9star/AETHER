@@ -1777,8 +1777,59 @@ export default function AetherCanvas() {
     memGeo.setAttribute("position",new THREE.BufferAttribute(memPos,3));
     memGeo.setAttribute("color",new THREE.BufferAttribute(memCol,3));
     memGeo.setDrawRange(0,0);
-    const memMat=new THREE.PointsMaterial({size:3.6,map:sprite,vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true,opacity:0.95});
+    // Memory stars get a procedural lit-glass material instead of a flat
+    // gradient sprite — inspired by the material-physics restraint Lusion
+    // is known for ("one object rendered with weight" beats more
+    // particles): a fixed-direction specular highlight and rim light give
+    // each star the read of a small lit sphere, not a blob of glow. Scoped
+    // to just these ≤120 memory-star points, not the 40,000-particle
+    // galaxy — cheap, and isolated from everything else on the canvas.
+    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95}};
+    const memMat=new THREE.ShaderMaterial({
+      uniforms:memUniforms,
+      vertexColors:true,
+      transparent:true,
+      depthWrite:false,
+      blending:THREE.AdditiveBlending,
+      vertexShader:`
+        uniform float uSize;
+        varying vec3 vColor;
+        void main(){
+          vColor=color;
+          vec4 mv=modelViewMatrix*vec4(position,1.0);
+          gl_PointSize=uSize*(340.0/-mv.z);
+          gl_Position=projectionMatrix*mv;
+        }`,
+      fragmentShader:`
+        uniform float uOpacity;
+        varying vec3 vColor;
+        void main(){
+          vec2 uv=gl_PointCoord*2.0-1.0;
+          float r=length(uv);
+          if (r>1.0) discard;
+          vec3 n=normalize(vec3(uv,sqrt(max(0.0,1.0-r*r))));
+          vec3 lightDir=normalize(vec3(-0.4,0.5,0.8));
+          float diff=max(dot(n,lightDir),0.0);
+          float fresnel=pow(1.0-n.z,2.5);
+          float spec=pow(max(dot(reflect(-lightDir,n),vec3(0.0,0.0,1.0)),0.0),40.0);
+          vec3 body=vColor*(0.4+0.6*diff);
+          vec3 rim=mix(vec3(0.65,0.8,1.0),vec3(1.0,0.65,0.9),0.5+0.5*sin(r*9.0))*fresnel*0.55;
+          vec3 col=body+rim+vec3(1.0)*spec*0.85;
+          float alpha=(1.0-smoothstep(0.7,1.0,r))*uOpacity;
+          gl_FragColor=vec4(col,alpha);
+        }`,
+    });
     const memPoints=new THREE.Points(memGeo,memMat);
+    // Without this, frustum culling computes memGeo's bounding sphere on
+    // the very first render frame — before any star exists, when every
+    // slot still holds the (1e5,1e5,1e5) placeholder — and three.js never
+    // recomputes it afterward. That stale, far-away sphere then silently
+    // fails the frustum test forever, so every real star written in later
+    // by rebuildStars() gets culled and never drawn at all. Confirmed by
+    // testing: this was true even for the original PointsMaterial, before
+    // any material change — a pre-existing bug, not a shader issue. CAP is
+    // only 120 points, so skipping culling entirely costs nothing.
+    memPoints.frustumCulled=false;
     scene.add(memPoints);
 
     // Constellation edges — sky-mode only, and deliberately NOT a single
@@ -2493,8 +2544,8 @@ export default function AetherCanvas() {
       const pulse=1+Math.sin(t*(1.5+displayEnergy*3))*(0.12+displayEnergy*0.28);
       core.scale.set(14*pulse,14*pulse,1);
       coreMat.opacity=0.5+displayEnergy*0.45;
-      (memMat as any).size=(skyModeOn?5.4:3.2)+Math.sin(t*1.3)*0.5;
-      memMat.opacity=0.8+Math.sin(t*0.9)*0.18;
+      memUniforms.uSize.value=(skyModeOn?8.5:3.2)+Math.sin(t*1.3)*0.5;
+      memUniforms.uOpacity.value=0.8+Math.sin(t*0.9)*0.18;
       // Fade the active galaxy nearly out in sky mode so the constellation
       // — a fraction of the particle count — actually reads against it.
       dimLevel+=((skyModeOn?0.0:1)-dimLevel)*(1-Math.exp(-3*dt));
