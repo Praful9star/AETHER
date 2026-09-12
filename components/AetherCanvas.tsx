@@ -2231,6 +2231,15 @@ export default function AetherCanvas() {
         memGeo.setDrawRange(0,n);
         memGeo.attributes.position.needsUpdate=true;
         memGeo.attributes.color.needsUpdate=true;
+        // THREE.Points.raycast() (used for tap-to-select) checks
+        // geometry.boundingSphere as an early-out *independent* of
+        // frustumCulled — that flag only skips the renderer's own culling
+        // pass, it doesn't touch the raycaster. Without this, tapping a
+        // star does nothing: the raycast bounding-sphere check silently
+        // fails against the same stale, pre-any-star sphere that broke
+        // rendering earlier, even though frustumCulled=false fixed
+        // rendering itself.
+        memGeo.computeBoundingSphere();
         // Local nearest-neighbor edges — see the comment at memLineGeo's
         // construction for why chronological connection was abandoned.
         // Each star links only to its closest neighbor(s) in space, and
