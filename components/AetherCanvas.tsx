@@ -1784,7 +1784,7 @@ export default function AetherCanvas() {
     // each star the read of a small lit sphere, not a blob of glow. Scoped
     // to just these ≤120 memory-star points, not the 40,000-particle
     // galaxy — cheap, and isolated from everything else on the canvas.
-    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95}};
+    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0}};
     const memMat=new THREE.ShaderMaterial({
       uniforms:memUniforms,
       vertexColors:true,
@@ -1802,6 +1802,7 @@ export default function AetherCanvas() {
         }`,
       fragmentShader:`
         uniform float uOpacity;
+        uniform float uSkyMix;
         varying vec3 vColor;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
@@ -1811,10 +1812,14 @@ export default function AetherCanvas() {
           vec3 lightDir=normalize(vec3(-0.4,0.5,0.8));
           float diff=max(dot(n,lightDir),0.0);
           float fresnel=pow(1.0-n.z,2.5);
-          float spec=pow(max(dot(reflect(-lightDir,n),vec3(0.0,0.0,1.0)),0.0),40.0);
-          vec3 body=vColor*(0.4+0.6*diff);
-          vec3 rim=mix(vec3(0.65,0.8,1.0),vec3(1.0,0.65,0.9),0.5+0.5*sin(r*9.0))*fresnel*0.55;
-          vec3 col=body+rim+vec3(1.0)*spec*0.85;
+          float spec=pow(max(dot(reflect(-lightDir,n),vec3(0.0,0.0,1.0)),0.0),60.0);
+          vec3 body=vColor*(0.5+0.5*diff);
+          // The lit-glass "weight" (rim + specular glint) is a sky-mode
+          // read — on the default view these stars are a quiet background
+          // presence, not bright marbles competing with the galaxy and the
+          // whisper text in front of them.
+          vec3 rim=vColor*fresnel*0.4*uSkyMix;
+          vec3 col=body+rim+vec3(1.0)*spec*0.6*uSkyMix;
           float alpha=(1.0-smoothstep(0.7,1.0,r))*uOpacity;
           gl_FragColor=vec4(col,alpha);
         }`,
@@ -1902,7 +1907,7 @@ export default function AetherCanvas() {
     // "Explore your sky" — pulls the camera back to frame the whole saved
     // constellation and slows the drift to something contemplative, rather
     // than the usual idle-rotate. Toggled via sceneRef.current.setSkyMode().
-    let skyModeOn=false, skyPrevRadius=38, dimLevel=1, skyBloomMul=1;
+    let skyModeOn=false, skyPrevRadius=38, dimLevel=1, skyBloomMul=1, memSkyMix=0;
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2544,8 +2549,10 @@ export default function AetherCanvas() {
       const pulse=1+Math.sin(t*(1.5+displayEnergy*3))*(0.12+displayEnergy*0.28);
       core.scale.set(14*pulse,14*pulse,1);
       coreMat.opacity=0.5+displayEnergy*0.45;
-      memUniforms.uSize.value=(skyModeOn?8.5:3.2)+Math.sin(t*1.3)*0.5;
-      memUniforms.uOpacity.value=0.8+Math.sin(t*0.9)*0.18;
+      memSkyMix+=((skyModeOn?1:0)-memSkyMix)*(1-Math.exp(-3*dt));
+      memUniforms.uSize.value=(1.8+memSkyMix*5.2)+Math.sin(t*1.3)*0.4*memSkyMix;
+      memUniforms.uOpacity.value=(0.32+memSkyMix*0.5)+Math.sin(t*0.9)*0.1;
+      memUniforms.uSkyMix.value=memSkyMix;
       // Fade the active galaxy nearly out in sky mode so the constellation
       // — a fraction of the particle count — actually reads against it.
       dimLevel+=((skyModeOn?0.0:1)-dimLevel)*(1-Math.exp(-3*dt));
