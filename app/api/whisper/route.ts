@@ -148,7 +148,13 @@ export async function POST(req: Request) {
 
     const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const completion = await client.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      // llama-3.1-8b-instant was deprecated by Groq and shut down on
+      // 2026-08-16 — every whisper call in production had been silently
+      // failing and falling back to the fixed 10-line local pool since
+      // then, which is exactly why quotes stopped feeling personalized.
+      // openai/gpt-oss-20b is Groq's own recommended replacement for this
+      // tier (fast/low-latency, comparable to the old 8b-instant).
+      model: "openai/gpt-oss-20b",
       max_tokens: 400,
       temperature: 0.9,
       messages: [

@@ -1801,9 +1801,12 @@ export default function AetherCanvas() {
 
     const memPos=new Float32Array(CAP*3).fill(1e5);
     const memCol=new Float32Array(CAP*3).fill(1);
+    const memPhase=new Float32Array(CAP);
+    for (let i=0;i<CAP;i++) memPhase[i]=Math.random()*Math.PI*2;
     const memGeo=new THREE.BufferGeometry();
     memGeo.setAttribute("position",new THREE.BufferAttribute(memPos,3));
     memGeo.setAttribute("color",new THREE.BufferAttribute(memCol,3));
+    memGeo.setAttribute("aPhase",new THREE.BufferAttribute(memPhase,1));
     memGeo.setDrawRange(0,0);
     // Memory stars get a procedural lit-glass material instead of a flat
     // gradient sprite — inspired by the material-physics restraint Lusion
@@ -1812,7 +1815,7 @@ export default function AetherCanvas() {
     // each star the read of a small lit sphere, not a blob of glow. Scoped
     // to just these ≤120 memory-star points, not the 40,000-particle
     // galaxy — cheap, and isolated from everything else on the canvas.
-    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0}};
+    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0}};
     const memMat=new THREE.ShaderMaterial({
       uniforms:memUniforms,
       vertexColors:true,
@@ -1821,9 +1824,12 @@ export default function AetherCanvas() {
       blending:THREE.AdditiveBlending,
       vertexShader:`
         uniform float uSize;
+        attribute float aPhase;
         varying vec3 vColor;
+        varying float vPhase;
         void main(){
           vColor=color;
+          vPhase=aPhase;
           vec4 mv=modelViewMatrix*vec4(position,1.0);
           gl_PointSize=uSize*(340.0/-mv.z);
           gl_Position=projectionMatrix*mv;
@@ -1831,7 +1837,9 @@ export default function AetherCanvas() {
       fragmentShader:`
         uniform float uOpacity;
         uniform float uSkyMix;
+        uniform float uTime;
         varying vec3 vColor;
+        varying float vPhase;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
           float r=length(uv);
@@ -1841,13 +1849,17 @@ export default function AetherCanvas() {
           float diff=max(dot(n,lightDir),0.0);
           float fresnel=pow(1.0-n.z,2.5);
           float spec=pow(max(dot(reflect(-lightDir,n),vec3(0.0,0.0,1.0)),0.0),60.0);
-          vec3 body=vColor*(0.5+0.5*diff);
+          // Each star twinkles on its own clock (vPhase, fixed per point
+          // slot) rather than in lockstep — a sky where every star pulses
+          // in unison reads as a UI animation, not a sky.
+          float twinkle=1.0-uSkyMix*0.22*(0.5+0.5*sin(uTime*1.6+vPhase*6.283));
+          vec3 body=vColor*(0.5+0.5*diff)*twinkle;
           // The lit-glass "weight" (rim + specular glint) is a sky-mode
           // read — on the default view these stars are a quiet background
           // presence, not bright marbles competing with the galaxy and the
           // whisper text in front of them.
           vec3 rim=vColor*fresnel*0.4*uSkyMix;
-          vec3 col=body+rim+vec3(1.0)*spec*0.6*uSkyMix;
+          vec3 col=body+rim+vec3(1.0)*spec*0.6*uSkyMix*twinkle;
           float alpha=(1.0-smoothstep(0.7,1.0,r))*uOpacity;
           gl_FragColor=vec4(col,alpha);
         }`,
@@ -1935,7 +1947,7 @@ export default function AetherCanvas() {
     // "Explore your sky" — pulls the camera back to frame the whole saved
     // constellation and slows the drift to something contemplative, rather
     // than the usual idle-rotate. Toggled via sceneRef.current.setSkyMode().
-    let skyModeOn=false, skyPrevRadius=38, dimLevel=1, skyBloomMul=1, memSkyMix=0;
+    let skyModeOn=false, skyPrevRadius=38, dimLevel=1, skyBloomMul=1, memSkyMix=0, skyRotBase=0, skyRotT=0;
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2323,6 +2335,7 @@ export default function AetherCanvas() {
       setSkyMode(on:boolean) {
         skyModeOn=on;
         if (on) {
+          skyRotBase=memPoints.rotation.y; skyRotT=0;
           skyPrevRadius=cam.targetRadius;
           let maxR=42;
           starsRef.current.forEach(s=>{
@@ -2429,8 +2442,14 @@ export default function AetherCanvas() {
       // Sky mode holds the constellation still (only camera orbit moves it)
       // so browsing your own stars feels like reading a fixed map, not
       // chasing a drifting one — and the connecting lines come forward.
-      memPoints.rotation.y=skyModeOn?0:spin*0.12;
-      memLines.rotation.y=skyModeOn?0:spin*0.12;
+      // Sky mode drifts slowly instead of sitting frozen — a static
+      // constellation reads as a diagram; a very slow turn reads as a
+      // sky. Rotation continues seamlessly from wherever it was when sky
+      // mode was entered (skyRotBase captured in setSkyMode) rather than
+      // jumping to an absolute angle.
+      if (skyModeOn) skyRotT+=dt;
+      memPoints.rotation.y=skyModeOn?skyRotBase+skyRotT*0.05:spin*0.12;
+      memLines.rotation.y=skyModeOn?skyRotBase+skyRotT*0.05:spin*0.12;
       memLines.visible=skyModeOn&&memEdgesReady;
       memLineMat.opacity=0.28+Math.sin(t*0.7)*0.08;
       nebulaGroup.rotation.y=-spin*0.045;
@@ -2588,9 +2607,10 @@ export default function AetherCanvas() {
       core.scale.set(14*pulse,14*pulse,1);
       coreMat.opacity=0.5+displayEnergy*0.45;
       memSkyMix+=((skyModeOn?1:0)-memSkyMix)*(1-Math.exp(-3*dt));
-      memUniforms.uSize.value=(1.8+memSkyMix*5.2)+Math.sin(t*1.3)*0.4*memSkyMix;
-      memUniforms.uOpacity.value=(0.32+memSkyMix*0.5)+Math.sin(t*0.9)*0.1;
+      memUniforms.uSize.value=1.8+memSkyMix*5.2;
+      memUniforms.uOpacity.value=0.32+memSkyMix*0.55;
       memUniforms.uSkyMix.value=memSkyMix;
+      memUniforms.uTime.value=t;
 
       // Star name labels — projected to screen space each frame, nearest
       // star wins when two would overlap (simple greedy declutter, cheap
@@ -2601,6 +2621,7 @@ export default function AetherCanvas() {
         if (memSkyMix<0.05) {
           labelEls.forEach(el=>{ if (el.style.opacity!=="0") el.style.opacity="0"; });
         } else {
+          memPoints.updateMatrixWorld(); // rotation.y was just set above this frame
           const w=mount.clientWidth,h=mount.clientHeight;
           const placed: {x:number;y:number}[]=[];
           const tmpV=new THREE.Vector3();
