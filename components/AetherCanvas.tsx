@@ -1587,6 +1587,34 @@ export default function AetherCanvas() {
     renderer.setClearColor(0x050308,1);
     mount.appendChild(renderer.domElement);
 
+    // Star name labels — sky mode only. Real star-chart apps (Star Walk,
+    // Stellarium) default to showing only major/isolated names and reveal
+    // the rest on demand, to avoid a wall of overlapping text; that's the
+    // model here too. Plain DOM nodes (not React state) because they need
+    // per-frame position updates from the render loop without triggering
+    // a re-render for every star on every frame — same reasoning as the
+    // canvas itself being imperative.
+    const labelLayer=document.createElement("div");
+    labelLayer.style.cssText="position:absolute;inset:0;pointer-events:none;overflow:hidden;";
+    mount.appendChild(labelLayer);
+    const labelEls=new Map<number,HTMLDivElement>();
+    const syncLabels=(arr:SavedStar[])=>{
+      const alive=new Set(arr.map(s=>s.id));
+      labelEls.forEach((el,id)=>{ if (!alive.has(id)) { el.remove(); labelEls.delete(id); } });
+      arr.forEach(s=>{
+        if (labelEls.has(s.id)) return;
+        const el=document.createElement("div");
+        const text=s.thought.length>30?s.thought.slice(0,30).trimEnd()+"…":s.thought;
+        el.textContent=text;
+        el.style.cssText=`position:absolute;left:0;top:0;transform:translate(-50%,10px);
+          font:italic 400 12px Georgia,'Times New Roman',serif;color:${s.palette[2]||"#c7bfff"};
+          opacity:0;white-space:nowrap;text-shadow:0 0 8px rgba(0,0,0,.9);
+          transition:opacity .25s ease;will-change:transform,opacity;`;
+        labelLayer.appendChild(el);
+        labelEls.set(s.id,el);
+      });
+    };
+
     // WebGL context loss recovery — without preventDefault() here, a lost
     // context (GPU driver reset, mobile Safari memory pressure, tab
     // backgrounded too long) leaves the canvas permanently black with no
@@ -2191,6 +2219,7 @@ export default function AetherCanvas() {
       },
       rebuildStars(arr:SavedStar[]) {
         const n=Math.min(arr.length,CAP);
+        syncLabels(arr.slice(0,n));
         for (let i=0;i<CAP;i++) {
           if (i<n) {
             const s=arr[i];
@@ -2553,6 +2582,42 @@ export default function AetherCanvas() {
       memUniforms.uSize.value=(1.8+memSkyMix*5.2)+Math.sin(t*1.3)*0.4*memSkyMix;
       memUniforms.uOpacity.value=(0.32+memSkyMix*0.5)+Math.sin(t*0.9)*0.1;
       memUniforms.uSkyMix.value=memSkyMix;
+
+      // Star name labels — projected to screen space each frame, nearest
+      // star wins when two would overlap (simple greedy declutter, cheap
+      // at CAP<=120: closest-first, skip if within 46px of an already-
+      // placed label). Only worth the cost once sky mode has actually
+      // faded in.
+      if (labelEls.size) {
+        if (memSkyMix<0.05) {
+          labelEls.forEach(el=>{ if (el.style.opacity!=="0") el.style.opacity="0"; });
+        } else {
+          const w=mount.clientWidth,h=mount.clientHeight;
+          const placed: {x:number;y:number}[]=[];
+          const tmpV=new THREE.Vector3();
+          const ranked=starsRef.current.map(s=>{
+            tmpV.set(s.pos[0],s.pos[1],s.pos[2]).applyMatrix4(memPoints.matrixWorld);
+            return {s,wpos:tmpV.clone(),d:tmpV.distanceTo(camera.position)};
+          }).sort((a,b)=>a.d-b.d);
+          ranked.forEach(({s,wpos})=>{
+            const el=labelEls.get(s.id);
+            if (!el) return;
+            const p=wpos.project(camera);
+            if (p.z>1||p.z<-1) { el.style.opacity="0"; return; }
+            const x=(p.x*0.5+0.5)*w, y=(-p.y*0.5+0.5)*h;
+            // Keep clear of the persistent top banner + quote text band,
+            // not just other labels — a truncated thought sitting behind
+            // "EXPLORING YOUR SKY..." is worse than just not showing it.
+            const inHeaderBand=y<290&&x>w*0.15&&x<w*0.85;
+            if (inHeaderBand||x<-60||x>w+60||y<-60||y>h+60||placed.some(pt=>Math.hypot(pt.x-x,pt.y-y)<46)) {
+              el.style.opacity="0"; return;
+            }
+            placed.push({x,y});
+            el.style.left=x+"px"; el.style.top=y+"px";
+            el.style.opacity=String(memSkyMix*0.85);
+          });
+        }
+      }
       // Fade the active galaxy nearly out in sky mode so the constellation
       // — a fraction of the particle count — actually reads against it.
       dimLevel+=((skyModeOn?0.0:1)-dimLevel)*(1-Math.exp(-3*dt));
@@ -2641,6 +2706,7 @@ export default function AetherCanvas() {
       geo.dispose(); mat.dispose(); sGeo.dispose(); sprite.dispose();
       (bgStars.material as THREE.Material).dispose();
       memGeo.dispose(); memMat.dispose(); memLineGeo.dispose(); memLineMat.dispose(); coreMat.dispose();
+      labelLayer.remove();
       meteorGeo.dispose(); meteorMat.dispose();
       nebulaMats.forEach(nm=>nm.dispose());
       dustGeo.dispose(); dustMat.dispose();
