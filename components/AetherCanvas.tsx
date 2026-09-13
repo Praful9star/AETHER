@@ -209,9 +209,14 @@ function makeLabelSprite(text: string): THREE.Sprite {
   const ctx=c.getContext("2d")!;
   ctx.clearRect(0,0,c.width,c.height);
   ctx.textAlign="center"; ctx.textBaseline="middle";
-  ctx.font="300 34px Georgia, serif";
-  ctx.fillStyle="rgba(226,220,255,0.92)";
-  ctx.shadowColor="rgba(180,150,255,0.65)"; ctx.shadowBlur=18;
+  // Instrument chrome, not human writing. The serif is reserved for the
+  // person's own words (their thoughts, the whisper line); the frame that
+  // measures them speaks in a cooler, technical voice. Keeping those two
+  // registers distinct is what stops everything from reading as one
+  // undifferentiated wash of pretty text.
+  ctx.font="400 27px 'Helvetica Neue', Inter, Arial, sans-serif";
+  ctx.fillStyle="rgba(198,208,242,0.9)";
+  ctx.shadowColor="rgba(130,160,255,0.5)"; ctx.shadowBlur=14;
   const spaced=text.split("").join(" ");
   ctx.fillText(spaced,c.width/2,c.height/2);
   const tex=new THREE.CanvasTexture(c);
@@ -1572,6 +1577,11 @@ export default function AetherCanvas() {
   const starBornTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
   const skyModeRef = useRef(false);
   useEffect(()=>{ skyModeRef.current=skyMode; },[skyMode]);
+  // Carried into the imperative render loop so the targeting reticle can
+  // track the selected star's projected position every frame without the
+  // loop reaching into React state.
+  const selectedIdRef = useRef<number|null>(null);
+  useEffect(()=>{ selectedIdRef.current=selectedStar?.id??null; },[selectedStar]);
   useEffect(()=>()=>{ if (starBornTimer.current) clearTimeout(starBornTimer.current); },[]);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
@@ -1597,19 +1607,65 @@ export default function AetherCanvas() {
     const labelLayer=document.createElement("div");
     labelLayer.style.cssText="position:absolute;inset:0;pointer-events:none;overflow:hidden;";
     mount.appendChild(labelLayer);
+
+    // Targeting reticle — locks onto whichever star you've selected. The
+    // instrument acknowledging your choice, which is the piece that makes
+    // tapping feel like operating something rather than opening a tooltip.
+    // Rotation/pulse are CSS keyframes, so holding a lock costs nothing per
+    // frame; only its x/y is updated from the projection loop.
+    const reticleStyle=document.createElement("style");
+    reticleStyle.textContent=`
+      @keyframes aeReticleSpin{to{transform:rotate(360deg)}}
+      @keyframes aeReticlePulse{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:.45;transform:scale(1.06)}}`;
+    labelLayer.appendChild(reticleStyle);
+    const reticle=document.createElement("div");
+    reticle.style.cssText=`position:absolute;left:0;top:0;width:54px;height:54px;
+      margin:-27px 0 0 -27px;opacity:0;transition:opacity .3s ease;will-change:transform,opacity;`;
+    const ring=document.createElement("div");
+    ring.style.cssText=`position:absolute;inset:0;border-radius:50%;
+      border:1px dashed rgba(190,205,255,.55);animation:aeReticleSpin 14s linear infinite;`;
+    const inner=document.createElement("div");
+    inner.style.cssText=`position:absolute;inset:9px;border-radius:50%;
+      border:1px solid rgba(210,220,255,.28);animation:aeReticlePulse 2.6s ease-in-out infinite;`;
+    reticle.appendChild(ring); reticle.appendChild(inner);
+    // Four corner brackets — the detail that reads specifically as
+    // "targeting", not just "circle around a thing".
+    ([[0,0,1,1],[1,0,-1,1],[0,1,1,-1],[1,1,-1,-1]] as const).forEach(([rx,ry,dx,dy])=>{
+      const b=document.createElement("div");
+      b.style.cssText=`position:absolute;width:9px;height:9px;
+        ${rx?"right":"left"}:-5px;${ry?"bottom":"top"}:-5px;
+        border-${dy>0?"top":"bottom"}:1px solid rgba(200,215,255,.75);
+        border-${dx>0?"left":"right"}:1px solid rgba(200,215,255,.75);`;
+      reticle.appendChild(b);
+    });
+    labelLayer.appendChild(reticle);
+
     const labelEls=new Map<number,HTMLDivElement>();
     const syncLabels=(arr:SavedStar[])=>{
       const alive=new Set(arr.map(s=>s.id));
       labelEls.forEach((el,id)=>{ if (!alive.has(id)) { el.remove(); labelEls.delete(id); } });
       arr.forEach(s=>{
         if (labelEls.has(s.id)) return;
+        const hue=s.palette[2]||"#c7bfff";
         const el=document.createElement("div");
-        const text=s.thought.length>30?s.thought.slice(0,30).trimEnd()+"…":s.thought;
-        el.textContent=text;
-        el.style.cssText=`position:absolute;left:0;top:0;transform:translate(-50%,10px);
-          font:italic 400 12px Georgia,'Times New Roman',serif;color:${s.palette[2]||"#c7bfff"};
-          opacity:0;white-space:nowrap;text-shadow:0 0 8px rgba(0,0,0,.9);
-          transition:opacity .25s ease;will-change:transform,opacity;`;
+        el.style.cssText=`position:absolute;left:0;top:0;transform:translate(-50%,0);
+          display:flex;flex-direction:column;align-items:center;
+          opacity:0;white-space:nowrap;transition:opacity .25s ease;will-change:transform,opacity;`;
+        // Leader stem: a hairline from the star down to its text. This is
+        // what makes a label read as an instrument annotation pointing at
+        // something, rather than a caption floating loose near it — and it
+        // lets the text sit far enough away to stay legible against the
+        // star's own glow.
+        const stem=document.createElement("div");
+        stem.style.cssText=`width:1px;height:18px;
+          background:linear-gradient(to bottom,transparent,${hue});opacity:.55;`;
+        const tick=document.createElement("div");
+        tick.style.cssText=`width:9px;height:1px;background:${hue};opacity:.5;margin-bottom:5px;`;
+        const txt=document.createElement("div");
+        txt.textContent=s.thought.length>30?s.thought.slice(0,30).trimEnd()+"…":s.thought;
+        txt.style.cssText=`font:italic 400 12px Georgia,'Times New Roman',serif;color:${hue};
+          text-shadow:0 0 10px rgba(0,0,0,.95),0 0 20px rgba(0,0,0,.7);`;
+        el.appendChild(stem); el.appendChild(tick); el.appendChild(txt);
         labelLayer.appendChild(el);
         labelEls.set(s.id,el);
       });
@@ -1815,7 +1871,8 @@ export default function AetherCanvas() {
     // each star the read of a small lit sphere, not a blob of glow. Scoped
     // to just these ≤120 memory-star points, not the 40,000-particle
     // galaxy — cheap, and isolated from everything else on the canvas.
-    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0}};
+    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0},
+      uNear:{value:30},uFar:{value:140}};
     const memMat=new THREE.ShaderMaterial({
       uniforms:memUniforms,
       vertexColors:true,
@@ -1827,10 +1884,12 @@ export default function AetherCanvas() {
         attribute float aPhase;
         varying vec3 vColor;
         varying float vPhase;
+        varying float vDepth;
         void main(){
           vColor=color;
           vPhase=aPhase;
           vec4 mv=modelViewMatrix*vec4(position,1.0);
+          vDepth=-mv.z;
           gl_PointSize=uSize*(340.0/-mv.z);
           gl_Position=projectionMatrix*mv;
         }`,
@@ -1838,8 +1897,11 @@ export default function AetherCanvas() {
         uniform float uOpacity;
         uniform float uSkyMix;
         uniform float uTime;
+        uniform float uNear;
+        uniform float uFar;
         varying vec3 vColor;
         varying float vPhase;
+        varying float vDepth;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
           float r=length(uv);
@@ -1860,7 +1922,16 @@ export default function AetherCanvas() {
           // whisper text in front of them.
           vec3 rim=vColor*fresnel*0.4*uSkyMix;
           vec3 col=body+rim+vec3(1.0)*spec*0.6*uSkyMix*twinkle;
-          float alpha=(1.0-smoothstep(0.7,1.0,r))*uOpacity;
+          // Atmospheric perspective. Without this every star renders at
+          // identical intensity no matter how far away it is, and the
+          // whole field reads as a flat scatter of dots on black. Distant
+          // stars now dim and shift cool/blue (the real-world haze cue the
+          // eye reads as depth), near ones stay bright and saturated — so
+          // the sky reads as a volume you're inside of.
+          float d=clamp((vDepth-uNear)/max(1.0,uFar-uNear),0.0,1.0);
+          col=mix(col,col*vec3(0.55,0.68,1.0),d*uSkyMix*0.8);
+          col*=mix(1.0,0.32,d*uSkyMix);
+          float alpha=(1.0-smoothstep(0.7,1.0,r))*uOpacity*mix(1.0,0.55,d*uSkyMix);
           gl_FragColor=vec4(col,alpha);
         }`,
     });
@@ -1939,6 +2010,53 @@ export default function AetherCanvas() {
     });
     let compassOpacity=0;
 
+    // Reference plane — concentric rings plus one spoke per compass sector,
+    // so each spoke physically points at its own label. This is what turns
+    // the compass from text floating in a void into an instrument: the
+    // labels are now anchored to a visible frame, and the rings give the
+    // eye a ground plane to read star height (energy) against. Hairline
+    // and very dim on purpose — it should register as engraved onto the
+    // dark, not drawn on top of it.
+    const gridPts: number[]=[], gridCols: number[]=[];
+    const RING_SEGS=120;
+    const GRID_TINT=[0.49,0.55,0.78]; // cool instrument blue
+    const pushV=(x:number,z:number,b:number)=>{
+      gridPts.push(x,0,z);
+      gridCols.push(GRID_TINT[0]*b,GRID_TINT[1]*b,GRID_TINT[2]*b);
+    };
+    // Rings dim as they go outward and spokes fade along their length, so
+    // the plane dissolves into the dark instead of ending in three hard
+    // drawn circles. Without the falloff it reads as clip-art; with it,
+    // it reads as a field the stars are suspended in.
+    ([[0.42,1.0],[0.7,0.62],[1.0,0.3]] as const).forEach(([rf,b])=>{
+      for (let i=0;i<RING_SEGS;i++) {
+        const a0=(i/RING_SEGS)*Math.PI*2, a1=((i+1)/RING_SEGS)*Math.PI*2;
+        pushV(Math.cos(a0)*rf,Math.sin(a0)*rf,b);
+        pushV(Math.cos(a1)*rf,Math.sin(a1)*rf,b);
+      }
+    });
+    compassSectors.forEach(({deg})=>{
+      const a=(deg/360)*Math.PI*2;
+      // Each spoke aims at its own compass label, so label and geometry
+      // read as one object rather than two coincidental layers.
+      const SEGS=14;
+      for (let i=0;i<SEGS;i++) {
+        const r0=0.34+(i/SEGS)*0.76, r1=0.34+((i+1)/SEGS)*0.76;
+        const b0=0.95*(1-i/SEGS)+0.06, b1=0.95*(1-(i+1)/SEGS)+0.06;
+        pushV(Math.cos(a)*r0,Math.sin(a)*r0,b0);
+        pushV(Math.cos(a)*r1,Math.sin(a)*r1,b1);
+      }
+    });
+    const gridGeo=new THREE.BufferGeometry();
+    gridGeo.setAttribute("position",new THREE.Float32BufferAttribute(gridPts,3));
+    gridGeo.setAttribute("color",new THREE.Float32BufferAttribute(gridCols,3));
+    const gridMat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:0,
+      blending:THREE.AdditiveBlending,depthWrite:false});
+    const gridLines=new THREE.LineSegments(gridGeo,gridMat);
+    gridLines.visible=false;
+    gridLines.frustumCulled=false;
+    scene.add(gridLines);
+
     // Resting distance pulled in close so the galaxy is the dominant
     // presence in the frame rather than a small blob adrift in empty
     // space — the boot sequence still dollies in from radius:150, so the
@@ -1948,6 +2066,13 @@ export default function AetherCanvas() {
     // constellation and slows the drift to something contemplative, rather
     // than the usual idle-rotate. Toggled via sceneRef.current.setSkyMode().
     let skyModeOn=false, skyPrevRadius=38, dimLevel=1, skyBloomMul=1, memSkyMix=0, skyRotBase=0, skyRotT=0;
+    // Entering sky mode eases the camera up to a shallow ¾ elevation so the
+    // reference plane is legible on arrival — viewed edge-on it degrades
+    // into a couple of stray arcs. Every star-map interface worth copying
+    // (Mass Effect, Elite) establishes this angle for the same reason.
+    // Cancelled the instant the user drags, so it steers rather than fights.
+    let skyPhiEase=false;
+    const SKY_PHI=1.02;
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -1989,7 +2114,7 @@ export default function AetherCanvas() {
 
     const markAct=()=>{ lastActRef.current=performance.now(); if (screensaver) setScreensaver(false); };
 
-    const onDown=(e:PointerEvent)=>{ dragging=true; px=e.clientX; py=e.clientY; downX=px; downY=py; downT=performance.now(); moved=0; cam.lastInput=downT; markAct(); };
+    const onDown=(e:PointerEvent)=>{ dragging=true; px=e.clientX; py=e.clientY; downX=px; downY=py; downT=performance.now(); moved=0; cam.lastInput=downT; skyPhiEase=false; markAct(); };
     const onMove=(e:PointerEvent)=>{
       if (!dragging) return;
       moved+=Math.abs(e.clientX-px)+Math.abs(e.clientY-py);
@@ -2336,6 +2461,7 @@ export default function AetherCanvas() {
         skyModeOn=on;
         if (on) {
           skyRotBase=memPoints.rotation.y; skyRotT=0;
+          skyPhiEase=true;
           skyPrevRadius=cam.targetRadius;
           let maxR=42;
           starsRef.current.forEach(s=>{
@@ -2349,7 +2475,11 @@ export default function AetherCanvas() {
           // layout choice, not a safety requirement.)
           const compassR=cam.targetRadius*1.3;
           compassSprites.forEach(({place})=>place(compassR));
+          // Grid is authored at unit radius, scaled to land its outer ring
+          // exactly on the compass labels so spoke and label read as one.
+          gridLines.scale.setScalar(compassR);
         } else {
+          skyPhiEase=false;
           cam.targetRadius=skyPrevRadius;
         }
         cam.lastInput=performance.now();
@@ -2447,6 +2577,10 @@ export default function AetherCanvas() {
       // sky. Rotation continues seamlessly from wherever it was when sky
       // mode was entered (skyRotBase captured in setSkyMode) rather than
       // jumping to an absolute angle.
+      if (skyPhiEase&&skyModeOn) {
+        cam.phi+=(SKY_PHI-cam.phi)*(1-Math.exp(-1.8*dt));
+        if (Math.abs(SKY_PHI-cam.phi)<0.004) skyPhiEase=false;
+      }
       if (skyModeOn) skyRotT+=dt;
       memPoints.rotation.y=skyModeOn?skyRotBase+skyRotT*0.05:spin*0.12;
       memLines.rotation.y=skyModeOn?skyRotBase+skyRotT*0.05:spin*0.12;
@@ -2611,6 +2745,11 @@ export default function AetherCanvas() {
       memUniforms.uOpacity.value=0.32+memSkyMix*0.55;
       memUniforms.uSkyMix.value=memSkyMix;
       memUniforms.uTime.value=t;
+      // Depth range tracks the camera so the haze cue stays correct at any
+      // zoom — near plane just inside the orbit, far plane past the back of
+      // the field.
+      memUniforms.uNear.value=cam.radius*0.5;
+      memUniforms.uFar.value=cam.radius*1.75;
 
       // Star name labels — projected to screen space each frame, nearest
       // star wins when two would overlap (simple greedy declutter, cheap
@@ -2620,11 +2759,14 @@ export default function AetherCanvas() {
       if (labelEls.size) {
         if (memSkyMix<0.05) {
           labelEls.forEach(el=>{ if (el.style.opacity!=="0") el.style.opacity="0"; });
+          if (reticle.style.opacity!=="0") reticle.style.opacity="0";
         } else {
           memPoints.updateMatrixWorld(); // rotation.y was just set above this frame
           const w=mount.clientWidth,h=mount.clientHeight;
           const placed: {x:number;y:number}[]=[];
           const tmpV=new THREE.Vector3();
+          const selId=selectedIdRef.current;
+          let lockedOn=false;
           const ranked=starsRef.current.map(s=>{
             tmpV.set(s.pos[0],s.pos[1],s.pos[2]).applyMatrix4(memPoints.matrixWorld);
             return {s,wpos:tmpV.clone(),d:tmpV.distanceTo(camera.position)};
@@ -2635,6 +2777,14 @@ export default function AetherCanvas() {
             const p=wpos.project(camera);
             if (p.z>1||p.z<-1) { el.style.opacity="0"; return; }
             const x=(p.x*0.5+0.5)*w, y=(-p.y*0.5+0.5)*h;
+            // The reticle tracks the selected star even when its own label
+            // loses the declutter contest — the lock is the point, the
+            // text is secondary.
+            if (s.id===selId) {
+              reticle.style.transform=`translate(${x}px,${y}px)`;
+              reticle.style.opacity=String(memSkyMix);
+              lockedOn=true;
+            }
             // Keep clear of the persistent top banner + quote text band,
             // not just other labels — a truncated thought sitting behind
             // "EXPLORING YOUR SKY..." is worse than just not showing it.
@@ -2646,6 +2796,7 @@ export default function AetherCanvas() {
             el.style.left=x+"px"; el.style.top=y+"px";
             el.style.opacity=String(memSkyMix*0.85);
           });
+          if (!lockedOn&&reticle.style.opacity!=="0") reticle.style.opacity="0";
         }
       }
       // Fade the active galaxy nearly out in sky mode so the constellation
@@ -2666,6 +2817,8 @@ export default function AetherCanvas() {
 
       compassOpacity+=((skyModeOn?0.85:0)-compassOpacity)*(1-Math.exp(-2.4*dt));
       compassSprites.forEach(({sprite})=>{ (sprite.material as THREE.SpriteMaterial).opacity=compassOpacity; });
+      gridLines.visible=compassOpacity>0.01;
+      gridMat.opacity=compassOpacity*0.5;
       matUniforms.uTime.value=t;
       // Tiny crisp particles while spelling so letterforms stay readable
       matUniforms.uSize.value=(0.9+displayEnergy*0.6+aLvl*0.5)*(spelling?0.42:1);
@@ -2740,6 +2893,7 @@ export default function AetherCanvas() {
       meteorGeo.dispose(); meteorMat.dispose();
       nebulaMats.forEach(nm=>nm.dispose());
       dustGeo.dispose(); dustMat.dispose();
+      gridGeo.dispose(); gridMat.dispose();
       composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
