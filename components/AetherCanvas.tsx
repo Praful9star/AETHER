@@ -2114,15 +2114,93 @@ export default function AetherCanvas() {
         pushV(Math.cos(a)*r1,Math.sin(a)*r1,b1);
       }
     });
+    const gridRad=new Float32Array(gridPts.length/3);
+    for (let i=0;i<gridRad.length;i++) {
+      gridRad[i]=Math.hypot(gridPts[i*3],gridPts[i*3+2]); // unit-space radius
+    }
     const gridGeo=new THREE.BufferGeometry();
     gridGeo.setAttribute("position",new THREE.Float32BufferAttribute(gridPts,3));
     gridGeo.setAttribute("color",new THREE.Float32BufferAttribute(gridCols,3));
-    const gridMat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:0,
-      blending:THREE.AdditiveBlending,depthWrite:false});
+    gridGeo.setAttribute("aRad",new THREE.BufferAttribute(gridRad,1));
+    // Custom shader rather than LineBasicMaterial so the plane can do two
+    // things a flat material can't: reveal itself outward from the centre
+    // when the instrument powers on, and carry a slow sweep afterwards.
+    // Both fall out of the same radius varying.
+    const gridUniforms={uOpacity:{value:0},uReveal:{value:1},uSweep:{value:-1}};
+    const gridMat=new THREE.ShaderMaterial({
+      uniforms:gridUniforms,
+      vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+      vertexShader:`
+        attribute float aRad;
+        varying vec3 vColor;
+        varying float vRad;
+        void main(){
+          vColor=color; vRad=aRad;
+          gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+        }`,
+      fragmentShader:`
+        uniform float uOpacity;
+        uniform float uReveal;
+        uniform float uSweep;
+        varying vec3 vColor;
+        varying float vRad;
+        void main(){
+          // Radial wipe — soft leading edge so the plane draws itself in
+          // rather than snapping on ring by ring.
+          float rev=1.0-smoothstep(uReveal-0.09,uReveal+0.02,vRad);
+          if (rev<=0.001) discard;
+          // Sweep: a narrow band of extra light running outward, the one
+          // motion that makes a static plane read as powered.
+          float sweep=exp(-pow((vRad-uSweep)*7.0,2.0));
+          vec3 col=vColor*(1.0+sweep*1.65);
+          gl_FragColor=vec4(col,uOpacity*rev*(1.0+sweep*1.05));
+        }`,
+    });
     const gridLines=new THREE.LineSegments(gridGeo,gridMat);
     gridLines.visible=false;
     gridLines.frustumCulled=false;
     scene.add(gridLines);
+
+    // Haze band. With the active galaxy hidden, sky mode was pure black
+    // between the stars — nothing ever replaced what was removed, and flat
+    // black is what makes a scene read as empty rather than deep. This is a
+    // very dim disc of gas hugging the same equatorial plane, so it fills
+    // the void AND reinforces the reference plane instead of being
+    // unrelated decoration. Angular variation keeps it from reading as a
+    // perfect ring, which would look like UI; real gas is uneven.
+    const hazeGeo=new THREE.PlaneGeometry(2,2);
+    const hazeUniforms={uOpacity:{value:0},uTime:{value:0}};
+    const hazeMat=new THREE.ShaderMaterial({
+      uniforms:hazeUniforms,
+      transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide,
+      vertexShader:`
+        varying vec2 vUv;
+        void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader:`
+        uniform float uOpacity;
+        uniform float uTime;
+        varying vec2 vUv;
+        void main(){
+          vec2 p=vUv*2.0-1.0;
+          float r=length(p);
+          if (r>1.0) discard;
+          // Brightest in a mid-radius annulus, fading to nothing at both
+          // the core and the rim — a band, not a filled disc.
+          float band=smoothstep(0.02,0.42,r)*(1.0-smoothstep(0.5,1.0,r));
+          float a=atan(p.y,p.x);
+          float wob=0.62+0.26*sin(a*3.0+uTime*0.05)+0.16*sin(a*5.0-uTime*0.035)
+                        +0.1*sin(a*9.0+uTime*0.02);
+          float v=band*wob;
+          vec3 col=mix(vec3(0.20,0.15,0.42),vec3(0.30,0.34,0.62),r);
+          gl_FragColor=vec4(col*v,v*uOpacity);
+        }`,
+    });
+    const haze=new THREE.Mesh(hazeGeo,hazeMat);
+    haze.rotation.x=-Math.PI/2;
+    haze.visible=false;
+    haze.frustumCulled=false;
+    haze.renderOrder=-1; // sits behind the stars and the plane drawn on it
+    scene.add(haze);
 
     // Resting distance pulled in close so the galaxy is the dominant
     // presence in the frame rather than a small blob adrift in empty
@@ -2142,6 +2220,12 @@ export default function AetherCanvas() {
     const SKY_PHI=1.02;
     let hoverMix=0;
     const HOVER_RADIUS=90; // px — generous, this is a mood piece not a clicking game
+    // Power-on choreography. Everything used to cross-fade at once, which
+    // reads cheap — nothing that arrives all at the same instant feels
+    // built. Order carries meaning here: your stars land first (the sky is
+    // already yours), then the instrument assembles around them to read it.
+    let skyEnterT=0;
+    const stage=(delay:number,dur:number)=>Math.max(0,Math.min(1,(skyEnterT-delay)/dur));
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2555,6 +2639,7 @@ export default function AetherCanvas() {
         skyModeOn=on;
         if (on) {
           skyRotBase=memPoints.rotation.y; skyRotT=0;
+          skyEnterT=0;
           skyPhiEase=true;
           skyPrevRadius=cam.targetRadius;
           let maxR=42;
@@ -2572,6 +2657,9 @@ export default function AetherCanvas() {
           // Grid is authored at unit radius, scaled to land its outer ring
           // exactly on the compass labels so spoke and label read as one.
           gridLines.scale.setScalar(compassR);
+          // Haze reaches well past the grid so the field has no visible
+          // outer edge — the sky should feel like it continues.
+          haze.scale.setScalar(compassR*1.85);
         } else {
           skyPhiEase=false;
           cam.targetRadius=skyPrevRadius;
@@ -2625,6 +2713,16 @@ export default function AetherCanvas() {
       lastT=now;
       const t=now/1000;
       maybeStepDownQuality(now);
+
+      // Power-on choreography, resolved once per frame. Stars land first
+      // (the sky is already yours), then the plane wipes outward from the
+      // centre, then the compass resolves, then the connections engage. On
+      // the way out memSkyMix/compassOpacity handle the fade, so these
+      // stages only gate the arrival.
+      if (skyModeOn) skyEnterT+=dt;
+      const kGrid=skyModeOn?stage(0.10,0.75):1;
+      const kCompass=skyModeOn?stage(0.62,0.5):1;
+      const kLinks=skyModeOn?stage(0.80,0.55):1;
 
       // Screensaver idle check
       const idle=now-lastActRef.current;
@@ -2683,7 +2781,7 @@ export default function AetherCanvas() {
       // Light packets running the connections. Each edge carries one, all
       // on their own offset so they don't march in formation, and the run
       // is paced slowly enough to read as flow rather than traffic.
-      travelers.visible=memSkyMix>0.04&&memEdgePairs.length>0;
+      travelers.visible=memSkyMix>0.04&&memEdgePairs.length>0&&kLinks>0.01;
       if (travelers.visible) {
         const nT=Math.min(memEdgePairs.length,TRAVELERS);
         for (let k=0;k<nT;k++) {
@@ -2697,13 +2795,13 @@ export default function AetherCanvas() {
           travPos[k*3+2]=e.az+(e.bz-e.az)*ef;
         }
         travGeo.attributes.position.needsUpdate=true;
-        travUniforms.uSize.value=2.6*memSkyMix;
+        travUniforms.uSize.value=2.6*memSkyMix*kLinks;
         // Brightest mid-flight, fading at both ends so packets emerge from
         // one star and dissolve into the next rather than popping.
-        travUniforms.uOpacity.value=memSkyMix*0.85;
+        travUniforms.uOpacity.value=memSkyMix*0.85*kLinks;
       }
-      memLines.visible=skyModeOn&&memEdgesReady;
-      memLineMat.opacity=0.28+Math.sin(t*0.7)*0.08;
+      memLines.visible=skyModeOn&&memEdgesReady&&kLinks>0.01;
+      memLineMat.opacity=(0.28+Math.sin(t*0.7)*0.08)*kLinks;
       nebulaGroup.rotation.y=-spin*0.045;
       dust.rotation.y=-spin*0.22;
       dust.rotation.x=Math.sin(t*0.05)*0.1;
@@ -2979,9 +3077,17 @@ export default function AetherCanvas() {
       skyBloomMul+=((skyModeOn?0.4:1)-skyBloomMul)*(1-Math.exp(-3*dt));
 
       compassOpacity+=((skyModeOn?0.85:0)-compassOpacity)*(1-Math.exp(-2.4*dt));
-      compassSprites.forEach(({sprite})=>{ (sprite.material as THREE.SpriteMaterial).opacity=compassOpacity; });
+      compassSprites.forEach(({sprite})=>{ (sprite.material as THREE.SpriteMaterial).opacity=compassOpacity*kCompass; });
       gridLines.visible=compassOpacity>0.01;
-      gridMat.opacity=compassOpacity*0.5;
+      gridUniforms.uOpacity.value=compassOpacity*0.5;
+      // Reveal edge sweeps past the outermost geometry (1.0) before the
+      // sweep takes over, so the wipe fully completes.
+      gridUniforms.uReveal.value=skyModeOn?0.04+kGrid*1.12:1.16;
+      // Then a slow pass outward roughly every 9s, only once assembled.
+      gridUniforms.uSweep.value=kGrid>=1?((t*0.115)%1.55)-0.12:-1;
+      haze.visible=compassOpacity>0.01;
+      hazeUniforms.uOpacity.value=compassOpacity*0.62*kGrid;
+      hazeUniforms.uTime.value=t;
       matUniforms.uTime.value=t;
       // Tiny crisp particles while spelling so letterforms stay readable
       matUniforms.uSize.value=(0.9+displayEnergy*0.6+aLvl*0.5)*(spelling?0.42:1);
@@ -3057,6 +3163,7 @@ export default function AetherCanvas() {
       nebulaMats.forEach(nm=>nm.dispose());
       dustGeo.dispose(); dustMat.dispose();
       gridGeo.dispose(); gridMat.dispose(); travGeo.dispose(); travMat.dispose();
+      hazeGeo.dispose(); hazeMat.dispose();
       composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
