@@ -1859,10 +1859,16 @@ export default function AetherCanvas() {
     const memCol=new Float32Array(CAP*3).fill(1);
     const memPhase=new Float32Array(CAP);
     for (let i=0;i<CAP;i++) memPhase[i]=Math.random()*Math.PI*2;
+    // Focus weight per star: 1 = the star under the cursor, ~0.6 = one of
+    // its connected neighbours, 0 = unrelated. Eased toward a target each
+    // frame so attention moves smoothly rather than snapping.
+    const memFocus=new Float32Array(CAP);
+    const memFocusTgt=new Float32Array(CAP);
     const memGeo=new THREE.BufferGeometry();
     memGeo.setAttribute("position",new THREE.BufferAttribute(memPos,3));
     memGeo.setAttribute("color",new THREE.BufferAttribute(memCol,3));
     memGeo.setAttribute("aPhase",new THREE.BufferAttribute(memPhase,1));
+    memGeo.setAttribute("aFocus",new THREE.BufferAttribute(memFocus,1));
     memGeo.setDrawRange(0,0);
     // Memory stars get a procedural lit-glass material instead of a flat
     // gradient sprite — inspired by the material-physics restraint Lusion
@@ -1872,7 +1878,7 @@ export default function AetherCanvas() {
     // to just these ≤120 memory-star points, not the 40,000-particle
     // galaxy — cheap, and isolated from everything else on the canvas.
     const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0},
-      uNear:{value:30},uFar:{value:140}};
+      uNear:{value:30},uFar:{value:140},uHover:{value:0}};
     const memMat=new THREE.ShaderMaterial({
       uniforms:memUniforms,
       vertexColors:true,
@@ -1882,15 +1888,18 @@ export default function AetherCanvas() {
       vertexShader:`
         uniform float uSize;
         attribute float aPhase;
+        attribute float aFocus;
         varying vec3 vColor;
         varying float vPhase;
         varying float vDepth;
+        varying float vFocus;
         void main(){
           vColor=color;
           vPhase=aPhase;
+          vFocus=aFocus;
           vec4 mv=modelViewMatrix*vec4(position,1.0);
           vDepth=-mv.z;
-          gl_PointSize=uSize*(340.0/-mv.z);
+          gl_PointSize=uSize*(1.0+aFocus*0.5)*(340.0/-mv.z);
           gl_Position=projectionMatrix*mv;
         }`,
       fragmentShader:`
@@ -1899,9 +1908,11 @@ export default function AetherCanvas() {
         uniform float uTime;
         uniform float uNear;
         uniform float uFar;
+        uniform float uHover;
         varying vec3 vColor;
         varying float vPhase;
         varying float vDepth;
+        varying float vFocus;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
           float r=length(uv);
@@ -1932,6 +1943,13 @@ export default function AetherCanvas() {
           col=mix(col,col*vec3(0.55,0.68,1.0),d*uSkyMix*0.8);
           col*=mix(1.0,0.32,d*uSkyMix);
           float alpha=(1.0-smoothstep(0.7,1.0,r))*uOpacity*mix(1.0,0.55,d*uSkyMix);
+          // Focus + context. While the cursor is near a star, that star and
+          // the cluster it belongs to hold full brightness while everything
+          // unrelated recedes — so attention reads as a physical property of
+          // the sky, not a tooltip bolted onto it.
+          float fk=uHover*uSkyMix;
+          col*=mix(1.0,mix(0.3,1.3,vFocus),fk);
+          alpha*=mix(1.0,mix(0.42,1.0,vFocus),fk);
           gl_FragColor=vec4(col,alpha);
         }`,
     });
@@ -1963,7 +1981,7 @@ export default function AetherCanvas() {
     // correct: not every thought belongs to a cluster.
     const memLineGeo=new LineSegmentsGeometry();
     const memLineMat=new LineMaterial({
-      color:0xc7bfff,
+      vertexColors:true,
       transparent:true,
       opacity:0,
       depthWrite:false,
@@ -1975,6 +1993,55 @@ export default function AetherCanvas() {
     memLines.visible=false;
     scene.add(memLines);
     let memEdgesReady=false;
+    // Edge endpoints kept around after the geometry is built so the render
+    // loop can animate light travelling along them, and adjacency so that
+    // focusing one star can light up the cluster it belongs to.
+    let memEdgePairs: {ax:number;ay:number;az:number;bx:number;by:number;bz:number}[]=[];
+    let memAdj: Map<number,Set<number>>=new Map();
+
+    // Light travelling the connections. Static lines between stars are
+    // inert — in any instrument worth looking at, a connection carries
+    // something. One packet per edge, looping, so the constellation reads
+    // as live circuitry rather than drawn-on scaffolding. Capacity is
+    // bounded by CAP since the edge set is a nearest-neighbour graph.
+    const TRAVELERS=CAP;
+    const travPos=new Float32Array(TRAVELERS*3).fill(1e5);
+    const travCol=new Float32Array(TRAVELERS*3).fill(1);
+    const travGeo=new THREE.BufferGeometry();
+    travGeo.setAttribute("position",new THREE.BufferAttribute(travPos,3));
+    travGeo.setAttribute("color",new THREE.BufferAttribute(travCol,3));
+    travGeo.setDrawRange(0,0);
+    const travUniforms={uSize:{value:0},uOpacity:{value:0}};
+    const travMat=new THREE.ShaderMaterial({
+      uniforms:travUniforms,
+      vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+      vertexShader:`
+        uniform float uSize;
+        varying vec3 vColor;
+        void main(){
+          vColor=color;
+          vec4 mv=modelViewMatrix*vec4(position,1.0);
+          gl_PointSize=uSize*(340.0/-mv.z);
+          gl_Position=projectionMatrix*mv;
+        }`,
+      fragmentShader:`
+        uniform float uOpacity;
+        varying vec3 vColor;
+        void main(){
+          vec2 uv=gl_PointCoord*2.0-1.0;
+          float r=length(uv);
+          if (r>1.0) discard;
+          // Hot white core bleeding into the edge's own colour — reads as a
+          // packet of light, not a coloured dot.
+          float core=pow(1.0-clamp(r,0.0,1.0),3.0);
+          vec3 col=mix(vColor,vec3(1.0),core*0.75);
+          gl_FragColor=vec4(col*(0.35+core*1.4),(1.0-smoothstep(0.25,1.0,r))*uOpacity);
+        }`,
+    });
+    const travelers=new THREE.Points(travGeo,travMat);
+    travelers.frustumCulled=false;
+    travelers.visible=false;
+    scene.add(travelers);
 
     // Emotional compass — "explore your sky" is a real map, not a random
     // scatter of points: azimuth encodes hue (valence-echo) and altitude
@@ -2073,6 +2140,8 @@ export default function AetherCanvas() {
     // Cancelled the instant the user drags, so it steers rather than fights.
     let skyPhiEase=false;
     const SKY_PHI=1.02;
+    let hoverMix=0;
+    const HOVER_RADIUS=90; // px — generous, this is a mood piece not a clicking game
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2407,15 +2476,40 @@ export default function AetherCanvas() {
             if (seen.has(key)) continue;
             seen.add(key); edges.push([i,j]);
           }
+          memEdgePairs=[]; memAdj=new Map();
           if (edges.length>0) {
             const segPos=new Float32Array(edges.length*6);
+            const segCol=new Float32Array(edges.length*6);
             edges.forEach(([i,j],k)=>{
               segPos[k*6]  =pos[i][0]; segPos[k*6+1]=pos[i][1]; segPos[k*6+2]=pos[i][2];
               segPos[k*6+3]=pos[j][0]; segPos[k*6+4]=pos[j][1]; segPos[k*6+5]=pos[j][2];
+              // Each end carries its own star's colour, pulled most of the
+              // way toward the neutral instrument lavender. Full-saturation
+              // endpoint colours read as candy; none at all reads as dead
+              // scaffolding. This sits between the two.
+              const ci=hexToRGB(arr[i].palette[2]||"#c7bfff");
+              const cj=hexToRGB(arr[j].palette[2]||"#c7bfff");
+              const NEUT=[0.78,0.75,1.0], MIXK=0.42;
+              for (let c=0;c<3;c++) {
+                segCol[k*6+c]  =NEUT[c]+(ci[c]-NEUT[c])*MIXK;
+                segCol[k*6+3+c]=NEUT[c]+(cj[c]-NEUT[c])*MIXK;
+              }
+              memEdgePairs.push({ax:pos[i][0],ay:pos[i][1],az:pos[i][2],
+                                 bx:pos[j][0],by:pos[j][1],bz:pos[j][2]});
+              const mid=[(ci[0]+cj[0])/2,(ci[1]+cj[1])/2,(ci[2]+cj[2])/2];
+              travCol[k*3]=mid[0]; travCol[k*3+1]=mid[1]; travCol[k*3+2]=mid[2];
+              if (!memAdj.has(i)) memAdj.set(i,new Set());
+              if (!memAdj.has(j)) memAdj.set(j,new Set());
+              memAdj.get(i)!.add(j); memAdj.get(j)!.add(i);
             });
             memLineGeo.setPositions(segPos);
+            memLineGeo.setColors(segCol);
             memLines.computeLineDistances();
+            travGeo.setDrawRange(0,Math.min(memEdgePairs.length,TRAVELERS));
+            travGeo.attributes.color.needsUpdate=true;
             memEdgesReady=true;
+          } else {
+            travGeo.setDrawRange(0,0);
           }
         }
       },
@@ -2584,6 +2678,30 @@ export default function AetherCanvas() {
       if (skyModeOn) skyRotT+=dt;
       memPoints.rotation.y=skyModeOn?skyRotBase+skyRotT*0.05:spin*0.12;
       memLines.rotation.y=skyModeOn?skyRotBase+skyRotT*0.05:spin*0.12;
+      travelers.rotation.y=memPoints.rotation.y;
+
+      // Light packets running the connections. Each edge carries one, all
+      // on their own offset so they don't march in formation, and the run
+      // is paced slowly enough to read as flow rather than traffic.
+      travelers.visible=memSkyMix>0.04&&memEdgePairs.length>0;
+      if (travelers.visible) {
+        const nT=Math.min(memEdgePairs.length,TRAVELERS);
+        for (let k=0;k<nT;k++) {
+          const e=memEdgePairs[k];
+          const f=(t*0.17+k*0.37)%1;
+          // Ease-in-out so a packet slows as it arrives and leaves again,
+          // instead of sliding at a dead constant rate.
+          const ef=f*f*(3-2*f);
+          travPos[k*3]  =e.ax+(e.bx-e.ax)*ef;
+          travPos[k*3+1]=e.ay+(e.by-e.ay)*ef;
+          travPos[k*3+2]=e.az+(e.bz-e.az)*ef;
+        }
+        travGeo.attributes.position.needsUpdate=true;
+        travUniforms.uSize.value=2.6*memSkyMix;
+        // Brightest mid-flight, fading at both ends so packets emerge from
+        // one star and dissolve into the next rather than popping.
+        travUniforms.uOpacity.value=memSkyMix*0.85;
+      }
       memLines.visible=skyModeOn&&memEdgesReady;
       memLineMat.opacity=0.28+Math.sin(t*0.7)*0.08;
       nebulaGroup.rotation.y=-spin*0.045;
@@ -2767,16 +2885,49 @@ export default function AetherCanvas() {
           const tmpV=new THREE.Vector3();
           const selId=selectedIdRef.current;
           let lockedOn=false;
-          const ranked=starsRef.current.map(s=>{
+          const ranked=starsRef.current.map((s,idx)=>{
             tmpV.set(s.pos[0],s.pos[1],s.pos[2]).applyMatrix4(memPoints.matrixWorld);
-            return {s,wpos:tmpV.clone(),d:tmpV.distanceTo(camera.position)};
+            return {s,idx,wpos:tmpV.clone(),d:tmpV.distanceTo(camera.position)};
           }).sort((a,b)=>a.d-b.d);
-          ranked.forEach(({s,wpos})=>{
+
+          // Which star is the cursor closest to? Projected first so the
+          // test is in screen space, which is what the hand actually aims
+          // in — a world-space test feels wrong under perspective.
+          const mouse=mouseRef.current;
+          const mx=(mouse.x*0.5+0.5)*w, my=(-mouse.y*0.5+0.5)*h;
+          let hoverIdx=-1, hoverBest=HOVER_RADIUS;
+          const screenPos=ranked.map(({wpos})=>{
+            const p=wpos.clone().project(camera);
+            return {x:(p.x*0.5+0.5)*w,y:(-p.y*0.5+0.5)*h,z:p.z};
+          });
+          if (mouse.active) {
+            ranked.forEach(({idx},k)=>{
+              const sp=screenPos[k];
+              if (sp.z>1||sp.z<-1) return;
+              const dist=Math.hypot(sp.x-mx,sp.y-my);
+              if (dist<hoverBest) { hoverBest=dist; hoverIdx=idx; }
+            });
+          }
+          const neighbours=hoverIdx>=0?memAdj.get(hoverIdx):undefined;
+          for (let i=0;i<CAP;i++) {
+            memFocusTgt[i]=hoverIdx<0?0:(i===hoverIdx?1:(neighbours?.has(i)?0.6:0));
+          }
+          hoverMix+=((hoverIdx>=0?1:0)-hoverMix)*(1-Math.exp(-6*dt));
+          memUniforms.uHover.value=hoverMix;
+          const fk=1-Math.exp(-9*dt);
+          let focusDirty=false;
+          for (let i=0;i<CAP;i++) {
+            const nv=memFocus[i]+(memFocusTgt[i]-memFocus[i])*fk;
+            if (Math.abs(nv-memFocus[i])>0.0005) { memFocus[i]=nv; focusDirty=true; }
+          }
+          if (focusDirty) memGeo.attributes.aFocus.needsUpdate=true;
+
+          ranked.forEach(({s,idx},k)=>{
             const el=labelEls.get(s.id);
             if (!el) return;
-            const p=wpos.project(camera);
-            if (p.z>1||p.z<-1) { el.style.opacity="0"; return; }
-            const x=(p.x*0.5+0.5)*w, y=(-p.y*0.5+0.5)*h;
+            const sp=screenPos[k];
+            if (sp.z>1||sp.z<-1) { el.style.opacity="0"; return; }
+            const x=sp.x, y=sp.y;
             // The reticle tracks the selected star even when its own label
             // loses the declutter contest — the lock is the point, the
             // text is secondary.
@@ -2784,6 +2935,16 @@ export default function AetherCanvas() {
               reticle.style.transform=`translate(${x}px,${y}px)`;
               reticle.style.opacity=String(memSkyMix);
               lockedOn=true;
+            }
+            // The star under the cursor always shows its name, declutter
+            // rules and header band included — if you're pointing at it,
+            // withholding the one thing you're asking for is absurd.
+            const isHovered=idx===hoverIdx;
+            if (isHovered&&x>-60&&x<w+60&&y>-60&&y<h+60) {
+              placed.push({x,y});
+              el.style.left=x+"px"; el.style.top=y+"px";
+              el.style.opacity=String(memSkyMix);
+              return;
             }
             // Keep clear of the persistent top banner + quote text band,
             // not just other labels — a truncated thought sitting behind
@@ -2794,7 +2955,9 @@ export default function AetherCanvas() {
             }
             placed.push({x,y});
             el.style.left=x+"px"; el.style.top=y+"px";
-            el.style.opacity=String(memSkyMix*0.85);
+            // Unrelated stars' labels recede while something is focused,
+            // matching what the shader does to the stars themselves.
+            el.style.opacity=String(memSkyMix*0.85*(1-hoverMix*0.72));
           });
           if (!lockedOn&&reticle.style.opacity!=="0") reticle.style.opacity="0";
         }
@@ -2893,7 +3056,7 @@ export default function AetherCanvas() {
       meteorGeo.dispose(); meteorMat.dispose();
       nebulaMats.forEach(nm=>nm.dispose());
       dustGeo.dispose(); dustMat.dispose();
-      gridGeo.dispose(); gridMat.dispose();
+      gridGeo.dispose(); gridMat.dispose(); travGeo.dispose(); travMat.dispose();
       composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
