@@ -3078,11 +3078,18 @@ export default function AetherCanvas() {
               if (dist<hoverBest) { hoverBest=dist; hoverIdx=idx; }
             });
           }
-          const neighbours=hoverIdx>=0?memAdj.get(hoverIdx):undefined;
+          // Focus follows selection as well as the cursor. Hover is driven
+          // by mousemove, which touch devices never fire — so without this
+          // the best interaction in the app was desktop-only. A tap is the
+          // touch equivalent of pointing at something, so it should light
+          // the same cluster.
+          const selIdx=selId!=null?starsRef.current.findIndex(s=>s.id===selId):-1;
+          const focusIdx=hoverIdx>=0?hoverIdx:selIdx;
+          const neighbours=focusIdx>=0?memAdj.get(focusIdx):undefined;
           for (let i=0;i<CAP;i++) {
-            memFocusTgt[i]=hoverIdx<0?0:(i===hoverIdx?1:(neighbours?.has(i)?0.6:0));
+            memFocusTgt[i]=focusIdx<0?0:(i===focusIdx?1:(neighbours?.has(i)?0.6:0));
           }
-          hoverMix+=((hoverIdx>=0?1:0)-hoverMix)*(1-Math.exp(-6*dt));
+          hoverMix+=((focusIdx>=0?1:0)-hoverMix)*(1-Math.exp(-6*dt));
           memUniforms.uHover.value=hoverMix;
           const fk=1-Math.exp(-9*dt);
           let focusDirty=false;
@@ -3106,10 +3113,11 @@ export default function AetherCanvas() {
               reticle.style.opacity=String(memSkyMix);
               lockedOn=true;
             }
-            // The star under the cursor always shows its name, declutter
-            // rules and header band included — if you're pointing at it,
-            // withholding the one thing you're asking for is absurd.
-            const isHovered=idx===hoverIdx;
+            // The star you're pointing at — or the one you've selected —
+            // always shows its name, declutter rules and header band
+            // included. If you're asking about it, withholding the one
+            // thing you're asking for is absurd.
+            const isHovered=idx===focusIdx;
             if (isHovered&&x>-60&&x<w+60&&y>-60&&y<h+60) {
               placed.push({x,y});
               el.style.left=x+"px"; el.style.top=y+"px";
@@ -3924,7 +3932,18 @@ export default function AetherCanvas() {
                 <span style={{color:selectedStar.palette[2],fontSize:9,letterSpacing:"0.24em"}}>{FORM_LABELS[selectedStar.form]??selectedStar.form.toUpperCase()}</span>
                 <span style={{color:"rgba(200,196,235,.35)",fontSize:9,letterSpacing:"0.1em",marginLeft:"auto"}}>{relativeDay(selectedStar.id)}</span>
               </div>
-              <div style={{color:"#ece8ff",fontSize:15,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",lineHeight:1.5,marginBottom:14}}>
+              {/* Your own words lead. This card is reached by tapping a
+                  star to remember a thought, and it previously showed only
+                  Aether's rewrite of it — the one thing you didn't write.
+                  The serif is the register reserved for human writing. */}
+              <div style={{color:"#f1eeff",fontSize:16,fontFamily:"var(--font-serif), Georgia, serif",lineHeight:1.5,marginBottom:12}}>
+                “{selectedStar.thought}”
+              </div>
+              <div style={{height:1,background:`linear-gradient(to right,${selectedStar.palette[2]}44,transparent)`,marginBottom:10}}/>
+              <div style={{color:"rgba(200,196,235,.4)",fontSize:8.5,letterSpacing:"0.22em",marginBottom:5}}>
+                AETHER ANSWERED
+              </div>
+              <div style={{color:"rgba(226,220,255,.72)",fontSize:12.5,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",lineHeight:1.5,marginBottom:14}}>
                 “{selectedStar.whisper}”
               </div>
               <div style={{display:"flex",gap:8}}>
