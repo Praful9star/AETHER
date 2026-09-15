@@ -1172,6 +1172,8 @@ function makeAudio() {
   // like moving to a different piece of music rather than a filter sweep.
   let currentScale=[220,261.6,293.7,329.6,392,440];
   let seqOn=false;
+  let seqSlow=false;
+  let lastLp=520; // current galaxy's drone cutoff, restored when leaving sky mode
   const tPluck=(freq:number, t:number)=>{
     const pan=nextPan();
     const o=ac.createOscillator(); o.type="triangle"; o.frequency.value=freq;
@@ -1188,7 +1190,7 @@ function makeAudio() {
         tPluck(f,ac.currentTime);
       }
       scheduleSeq();
-    }, 480+Math.random()*420);
+    }, (480+Math.random()*420)*(seqSlow?2.6:1));
   };
   scheduleSeq();
 
@@ -1291,6 +1293,51 @@ function makeAudio() {
       return s/(aData.length*255);
     },
 
+    // ── Sky mode voice ──────────────────────────────────────────────────
+    // Browsing your own sky is the quietest thing the app does, so it gets
+    // a quieter bed rather than a louder one: the pluck sequencer slows
+    // right down and the drone opens up, leaving room for the instrument's
+    // own small sounds. Entering and leaving are marked, because an
+    // unmarked mode change is the thing that makes software feel like
+    // software.
+    skyMode(on:boolean) {
+      if (ac.state==="suspended") ac.resume();
+      const t=ac.currentTime;
+      seqSlow=on;
+      // Leaving restores whatever the current galaxy's own cutoff was, so
+      // the bed lands back where it belongs instead of on a generic value
+      // until the next morph happens to correct it.
+      lp.frequency.setTargetAtTime(on?1500:lastLp,t,1.2);
+      if (on) {
+        // Power-on: an airy rise with a fifth settling under it.
+        sfxGlide(180,720,"sine",t,1.15,0.05,-0.25);
+        sfxNote(392,"sine",t+0.30,0.25,2.4,0.035,0.2);
+        sfxNote(587.3,"sine",t+0.55,0.3,2.6,0.026,-0.15);
+        sfxNote(196,"sine",t+0.1,0.4,3.0,0.03,0);
+      } else {
+        sfxGlide(520,190,"sine",t,0.8,0.035,0.2);
+        sfxNote(261.6,"sine",t+0.05,0.2,1.6,0.024,0);
+      }
+    },
+    // A clear, close tone — this one is a direct answer to a tap, so it
+    // reads as confirmation rather than ambience.
+    skySelect(pan=0) {
+      if (ac.state==="suspended") ac.resume();
+      const t=ac.currentTime;
+      sfxNote(880,"sine",t,0.004,0.5,0.05,pan);
+      sfxNote(1318.5,"sine",t+0.02,0.004,0.36,0.03,pan*0.6);
+      sfxNote(440,"triangle",t,0.01,0.7,0.022,pan*0.3);
+    },
+    // Struck once per star as the sweep crosses it — tiny, high and short,
+    // so a field of them reads as the instrument counting rather than as
+    // a melody competing with the bed.
+    skyPing(pan=0, bright=1) {
+      if (ac.state==="suspended") return;
+      const t=ac.currentTime;
+      sfxNote(1760+bright*440,"sine",t,0.003,0.22,0.016*bright,pan);
+      sfxNote(2637,"sine",t+0.01,0.003,0.14,0.008*bright,pan*0.5);
+    },
+
     transition(form: FormType, energy: number) {
       if (ac.state==="suspended") ac.resume();
       const t=ac.currentTime;
@@ -1326,6 +1373,7 @@ function makeAudio() {
         phyllotaxis:2600, mobius:1800, trefoil:2100, dendrite:4200,
         aurora:900, wormhole:260, crystal:3200,
       };
+      lastLp=LP[form];
       lp.frequency.setTargetAtTime(LP[form],t,0.8);
       nFilt.frequency.setTargetAtTime(NF[form],t,0.5);
       dOut.gain.setTargetAtTime(0.10+energy*0.16,t,0.8);
@@ -1878,7 +1926,8 @@ export default function AetherCanvas() {
     // to just these ≤120 memory-star points, not the 40,000-particle
     // galaxy — cheap, and isolated from everything else on the canvas.
     const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0},
-      uNear:{value:30},uFar:{value:140},uHover:{value:0}};
+      uNear:{value:30},uFar:{value:140},uHover:{value:0},
+      uSweepR:{value:-1},uSweepW:{value:4}};
     const memMat=new THREE.ShaderMaterial({
       uniforms:memUniforms,
       vertexColors:true,
@@ -1893,10 +1942,15 @@ export default function AetherCanvas() {
         varying float vPhase;
         varying float vDepth;
         varying float vFocus;
+        varying float vRadial;
         void main(){
           vColor=color;
           vPhase=aPhase;
           vFocus=aFocus;
+          // Distance from the vertical axis — rotation-invariant, so it
+          // stays correct as the sky turns, and it's the same measure the
+          // reference plane's sweep runs along.
+          vRadial=length(position.xz);
           vec4 mv=modelViewMatrix*vec4(position,1.0);
           vDepth=-mv.z;
           gl_PointSize=uSize*(1.0+aFocus*0.5)*(340.0/-mv.z);
@@ -1909,10 +1963,13 @@ export default function AetherCanvas() {
         uniform float uNear;
         uniform float uFar;
         uniform float uHover;
+        uniform float uSweepR;
+        uniform float uSweepW;
         varying vec3 vColor;
         varying float vPhase;
         varying float vDepth;
         varying float vFocus;
+        varying float vRadial;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
           float r=length(uv);
@@ -1942,7 +1999,11 @@ export default function AetherCanvas() {
           float d=clamp((vDepth-uNear)/max(1.0,uFar-uNear),0.0,1.0);
           col=mix(col,col*vec3(0.55,0.68,1.0),d*uSkyMix*0.8);
           col*=mix(1.0,0.32,d*uSkyMix);
-          float alpha=(1.0-smoothstep(0.7,1.0,r))*uOpacity*mix(1.0,0.55,d*uSkyMix);
+          // Distant stars also go soft, not just dim — depth without any
+          // focus falloff still reads as a flat sticker sheet, because the
+          // eye takes edge sharpness as a distance cue too.
+          float edge0=mix(0.72,0.24,d*uSkyMix);
+          float alpha=(1.0-smoothstep(edge0,1.0,r))*uOpacity*mix(1.0,0.55,d*uSkyMix);
           // Focus + context. While the cursor is near a star, that star and
           // the cluster it belongs to hold full brightness while everything
           // unrelated recedes — so attention reads as a physical property of
@@ -1950,6 +2011,14 @@ export default function AetherCanvas() {
           float fk=uHover*uSkyMix;
           col*=mix(1.0,mix(0.3,1.3,vFocus),fk);
           alpha*=mix(1.0,mix(0.42,1.0,vFocus),fk);
+          // The sweep reads each star as it passes over it. Without this
+          // the wave and the stars were two systems sharing a screen; with
+          // it, the plane is visibly measuring the thing it's drawn under.
+          if (uSweepR>0.0) {
+            float ping=exp(-pow((vRadial-uSweepR)/max(0.001,uSweepW),2.0))*uSkyMix;
+            col+=col*ping*1.9+vec3(0.35,0.42,0.6)*ping*0.5;
+            alpha=min(1.0,alpha+ping*0.35);
+          }
           gl_FragColor=vec4(col,alpha);
         }`,
     });
@@ -2226,6 +2295,7 @@ export default function AetherCanvas() {
     // already yours), then the instrument assembles around them to read it.
     let skyEnterT=0;
     const stage=(delay:number,dur:number)=>Math.max(0,Math.min(1,(skyEnterT-delay)/dur));
+    let skyCompassR=0, prevSweepR=-1;
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2637,6 +2707,7 @@ export default function AetherCanvas() {
       },
       setSkyMode(on:boolean) {
         skyModeOn=on;
+        audioRef.current?.skyMode?.(on);
         if (on) {
           skyRotBase=memPoints.rotation.y; skyRotT=0;
           skyEnterT=0;
@@ -2653,6 +2724,7 @@ export default function AetherCanvas() {
           // into. (Labels are also screen-space sized now, so this is a
           // layout choice, not a safety requirement.)
           const compassR=cam.targetRadius*1.3;
+          skyCompassR=compassR;
           compassSprites.forEach(({place})=>place(compassR));
           // Grid is authored at unit radius, scaled to land its outer ring
           // exactly on the compass labels so spoke and label read as one.
@@ -3085,6 +3157,28 @@ export default function AetherCanvas() {
       gridUniforms.uReveal.value=skyModeOn?0.04+kGrid*1.12:1.16;
       // Then a slow pass outward roughly every 9s, only once assembled.
       gridUniforms.uSweep.value=kGrid>=1?((t*0.115)%1.55)-0.12:-1;
+
+      // Same wave, expressed in world units, handed to the star shader so
+      // stars light as it crosses them — and struck as a quiet bell on the
+      // way past, capped per frame so a dense sky chimes rather than
+      // clatters.
+      const sweepR=gridUniforms.uSweep.value>0&&skyCompassR>0
+        ? gridUniforms.uSweep.value*skyCompassR : -1;
+      memUniforms.uSweepR.value=sweepR*memSkyMix>0?sweepR:-1;
+      memUniforms.uSweepW.value=Math.max(2,skyCompassR*0.055);
+      if (sweepR>0&&prevSweepR>0&&sweepR>prevSweepR&&memSkyMix>0.7) {
+        let struck=0;
+        for (const s of starsRef.current) {
+          if (struck>=3) break;
+          const sr=Math.hypot(s.pos[0],s.pos[2]);
+          if (sr>prevSweepR&&sr<=sweepR) {
+            audioRef.current?.skyPing?.(Math.max(-1,Math.min(1,s.pos[0]/Math.max(1,skyCompassR))),
+              0.6+Math.min(1,s.energy??0.5)*0.5);
+            struck++;
+          }
+        }
+      }
+      prevSweepR=sweepR;
       haze.visible=compassOpacity>0.01;
       hazeUniforms.uOpacity.value=compassOpacity*0.62*kGrid;
       hazeUniforms.uTime.value=t;
@@ -3329,7 +3423,8 @@ export default function AetherCanvas() {
 
   useEffect(()=>{sceneRef.current.onStarTap=(i:number)=>{
     const s=starsRef.current[i]; if (!s) return;
-    if (skyModeRef.current) setSelectedStar(s); else revisit(s);
+    if (skyModeRef.current) { setSelectedStar(s); audioRef.current?.skySelect?.(0); }
+    else revisit(s);
   };});
 
   const capture=()=>{ try{setCaptureURL(sceneRef.current.snapshot?.(whisper)??null);}catch{} };
