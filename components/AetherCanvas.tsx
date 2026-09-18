@@ -1953,7 +1953,11 @@ export default function AetherCanvas() {
           vRadial=length(position.xz);
           vec4 mv=modelViewMatrix*vec4(position,1.0);
           vDepth=-mv.z;
-          gl_PointSize=uSize*(1.0+aFocus*0.5)*(340.0/-mv.z);
+          // Clamped. Unbounded perspective scaling is fine with a handful
+          // of stars because none happen to sit near the camera, but at
+          // full capacity several always do and they balloon into orbs
+          // that swallow the frame. A star is a star at any distance.
+          gl_PointSize=min(uSize*(1.0+aFocus*0.5)*(340.0/-mv.z),34.0);
           gl_Position=projectionMatrix*mv;
         }`,
       fragmentShader:`
@@ -2289,6 +2293,7 @@ export default function AetherCanvas() {
     const SKY_PHI=1.02;
     let hoverMix=0;
     const HOVER_RADIUS=90; // px — generous, this is a mood piece not a clicking game
+    const LABEL_BUDGET=14; // named stars at once; the rest are a hover away
     // Power-on choreography. Everything used to cross-fade at once, which
     // reads cheap — nothing that arrives all at the same instant feels
     // built. Order carries meaning here: your stars land first (the sky is
@@ -3124,11 +3129,31 @@ export default function AetherCanvas() {
               el.style.opacity=String(memSkyMix);
               return;
             }
-            // Keep clear of the persistent top banner + quote text band,
-            // not just other labels — a truncated thought sitting behind
-            // "EXPLORING YOUR SKY..." is worse than just not showing it.
-            const inHeaderBand=y<290&&x>w*0.15&&x<w*0.85;
-            if (inHeaderBand||x<-60||x>w+60||y<-60||y>h+60||placed.some(pt=>Math.hypot(pt.x-x,pt.y-y)<46)) {
+            // Keep clear of the persistent top banner + quote text band and
+            // the input bar at the bottom — a truncated thought sitting
+            // behind other UI is worse than just not showing it.
+            // Exclusion zones traced to where the chrome actually sits,
+            // not blanket bands. A first pass used broad strips and cost a
+            // sparse sky most of its names for no reason — the point is to
+            // dodge the UI, not to fence off half the frame.
+            const inBanner=y<70&&x>w*0.26&&x<w*0.74;
+            const inQuote=y>h*0.16&&y<h*0.31&&x>w*0.26&&x<w*0.74;
+            const inBrand=y<h*0.1&&x<w*0.18;
+            const inControls=y<h*0.23&&x>w*0.9;
+            const inHeaderBand=inBanner||inQuote||inBrand||inControls;
+            const inFooterBand=y>h*0.83&&x>w*0.28&&x<w*0.72;
+            // Labels are centre-anchored, so one near either edge runs off
+            // the frame and gets sliced mid-word.
+            const offEdge=x<95||x>w-95;
+            // Collision is tested against the label's real footprint, not a
+            // circle around its anchor. These are ~170px wide and ~14px
+            // tall, so a circular test lets neighbours sit right on top of
+            // each other — which is exactly what a full sky looked like.
+            const collides=placed.some(pt=>Math.abs(pt.x-x)<172&&Math.abs(pt.y-y)<24);
+            // And a hard cap, because a star chart names its notable stars,
+            // not all of them. The rest are one hover away.
+            if (inHeaderBand||inFooterBand||offEdge||collides
+                ||placed.length>=LABEL_BUDGET||y<-60||y>h+60) {
               el.style.opacity="0"; return;
             }
             placed.push({x,y});
