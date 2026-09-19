@@ -2252,7 +2252,7 @@ export default function AetherCanvas() {
       transparent:true,
       opacity:0,
       depthWrite:false,
-      linewidth:1.3, // screen-space pixels — thin and considered, not a glow
+      linewidth:1.6, // screen-space pixels — thin and considered, not a glow
       worldUnits:false,
     });
     memLineMat.resolution.set(mount.clientWidth,mount.clientHeight);
@@ -2265,6 +2265,12 @@ export default function AetherCanvas() {
     // focusing one star can light up the cluster it belongs to.
     let memEdgePairs: {ax:number;ay:number;az:number;bx:number;by:number;bz:number}[]=[];
     let memAdj: Map<number,Set<number>>=new Map();
+    // The unlit edge colours, plus which two stars each edge joins, kept so
+    // focusing a star can re-light just its own figure. Rewritten only when
+    // the focused star changes, never per frame.
+    let memSegColBase:Float32Array|null=null;
+    let memEdgeIdx:[number,number][]=[];
+    let memLitFor=-2;
 
     // Light travelling the connections. Static lines between stars are
     // inert — in any instrument worth looking at, a connection carries
@@ -2813,27 +2819,61 @@ export default function AetherCanvas() {
         memEdgesReady=false;
         if (n>=2) {
           const pos=arr.slice(0,n).map(s=>s.pos);
+          // Nearest-neighbour distances, kept only to get the median — the
+          // sense of scale for "close" in this particular sky.
           const nearest=new Float32Array(n).fill(Infinity);
-          const nearestJ=new Int32Array(n).fill(-1);
           for (let i=0;i<n;i++) {
             for (let j=0;j<n;j++) {
               if (i===j) continue;
               const d=Math.hypot(pos[i][0]-pos[j][0],pos[i][1]-pos[j][1],pos[i][2]-pos[j][2]);
-              if (d<nearest[i]) { nearest[i]=d; nearestJ[i]=j; }
+              if (d<nearest[i]) nearest[i]=d;
             }
           }
           const sorted=Array.from(nearest).filter(d=>isFinite(d)).sort((a,b)=>a-b);
           const median=sorted[Math.floor(sorted.length/2)]??0;
-          const threshold=median*1.7;
-          const edges: [number,number][]=[];
-          const seen=new Set<string>();
-          for (let i=0;i<n;i++) {
-            const j=nearestJ[i];
-            if (j<0||nearest[i]>threshold) continue;
-            const key=i<j?`${i}-${j}`:`${j}-${i}`;
-            if (seen.has(key)) continue;
-            seen.add(key); edges.push([i,j]);
+          // Joining each star to only its single closest neighbour gave
+          // isolated pairs, not constellations: a sky of 40 thoughts came
+          // out as roughly fifteen disconnected two-star dashes plus a few
+          // strays reaching clear across the frame. Real constellations are
+          // connected figures of several stars.
+          //
+          // So: build the minimum spanning tree — the cheapest set of links
+          // that connects every star — then cut the links too long to be
+          // plausibly the same cluster. Cutting a spanning tree leaves
+          // connected components, which is exactly "a handful of separate
+          // figures" rather than either one web or a scatter of pairs. A
+          // star with no close neighbours simply ends up alone, which is
+          // honest: a thought unlike any other you've had shouldn't be
+          // dragged into someone else's shape.
+          //
+          // Prim's, O(n²) — n is capped at 120, so this is nothing, and it
+          // only runs when the star set changes.
+          const inTree=new Uint8Array(n);
+          const best=new Float32Array(n).fill(Infinity);
+          const bestFrom=new Int32Array(n).fill(-1);
+          best[0]=0;
+          const tree:[number,number,number][]=[];
+          for (let it=0;it<n;it++) {
+            let u=-1,ud=Infinity;
+            for (let k=0;k<n;k++) if (!inTree[k]&&best[k]<ud) { ud=best[k]; u=k; }
+            if (u<0) break;
+            inTree[u]=1;
+            if (bestFrom[u]>=0) tree.push([bestFrom[u],u,ud]);
+            for (let v=0;v<n;v++) {
+              if (inTree[v]) continue;
+              const d=Math.hypot(pos[u][0]-pos[v][0],pos[u][1]-pos[v][1],pos[u][2]-pos[v][2]);
+              if (d<best[v]) { best[v]=d; bestFrom[v]=u; }
+            }
           }
+          // Two limits. The adaptive one keeps the figures tight relative to
+          // however dense this particular sky is; the absolute one stops a
+          // sparse sky drawing a line from one horizon to the other, which
+          // no star chart does. Stars sit on a shell of radius ~52-76, so
+          // 45 units is about a third of the way across.
+          const threshold=Math.min(median*2.2,45);
+          const edges: [number,number][]=tree
+            .filter(([,,d])=>d<=threshold)
+            .map(([i,j])=>[i,j] as [number,number]);
           memEdgePairs=[]; memAdj=new Map();
           if (edges.length>0) {
             const segPos=new Float32Array(edges.length*6);
@@ -2860,6 +2900,9 @@ export default function AetherCanvas() {
               if (!memAdj.has(j)) memAdj.set(j,new Set());
               memAdj.get(i)!.add(j); memAdj.get(j)!.add(i);
             });
+            memSegColBase=segCol.slice();
+            memEdgeIdx=edges.map(([i,j])=>[i,j] as [number,number]);
+            memLitFor=-2;
             memLineGeo.setPositions(segPos);
             memLineGeo.setColors(segCol);
             memLines.computeLineDistances();
@@ -3085,7 +3128,12 @@ export default function AetherCanvas() {
         travUniforms.uOpacity.value=memSkyMix*0.85*kLinks;
       }
       memLines.visible=skyModeOn&&memEdgesReady&&kLinks>0.01;
-      memLineMat.opacity=(0.28+Math.sin(t*0.7)*0.08)*kLinks;
+      // Raised from 0.28. At that level a 1.3px line over near-black was
+      // effectively invisible — the figures were being computed and then
+      // not shown, which is why the sky read as a scatter of dots. Now that
+      // the graph draws real connected constellations instead of isolated
+      // pairs, they are worth seeing.
+      memLineMat.opacity=(0.5+Math.sin(t*0.7)*0.1)*kLinks;
       nebulaGroup.rotation.y=-spin*0.045;
       dust.rotation.y=-spin*0.22;
       dust.rotation.x=Math.sin(t*0.05)*0.1;
@@ -3298,6 +3346,25 @@ export default function AetherCanvas() {
           const selIdx=selId!=null?starsRef.current.findIndex(s=>s.id===selId):-1;
           const focusIdx=hoverIdx>=0?hoverIdx:selIdx;
           const neighbours=focusIdx>=0?memAdj.get(focusIdx):undefined;
+          // Light the figure you are touching and let the rest recede. The
+          // constellation lines are the one part of the sky that says which
+          // thoughts belong together, so they should answer attention
+          // rather than sit at one flat brightness whatever you do. Only
+          // rebuilt when the focused star actually changes — this writes a
+          // whole attribute buffer, which is not a per-frame cost worth
+          // paying for something that changes on hover.
+          if (memSegColBase&&memEdgesReady&&focusIdx!==memLitFor) {
+            memLitFor=focusIdx;
+            const lit=new Float32Array(memSegColBase.length);
+            for (let k=0;k<memEdgeIdx.length;k++) {
+              const [i,j]=memEdgeIdx[k];
+              const near=focusIdx<0||i===focusIdx||j===focusIdx
+                ||!!neighbours?.has(i)||!!neighbours?.has(j);
+              const g=focusIdx<0?1:(near?1.85:0.42);
+              for (let c=0;c<6;c++) lit[k*6+c]=memSegColBase[k*6+c]*g;
+            }
+            memLineGeo.setColors(lit);
+          }
           for (let i=0;i<CAP;i++) {
             memFocusTgt[i]=focusIdx<0?0:(i===focusIdx?1:(neighbours?.has(i)?0.6:0));
           }
