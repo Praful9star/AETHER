@@ -1248,6 +1248,61 @@ function makeAudio() {
     }
     node.connect(p); p.connect(sfxBus);
   };
+  // ── Constellation voices ────────────────────────────────────────────
+  // Discrete pings tell you something happened; they don't tell you where
+  // you are. A soundscape needs the sky itself to be audible, so a small
+  // pool of sustained voices is parked on real stars and simply left
+  // there. Orbit, and the chord moves around your head — the sources
+  // genuinely sit in the world and only the listener turns. Capped at
+  // five and locked to a pentatonic set so it stays a chord you can be
+  // inside rather than a cluster beating against itself.
+  const VOICE_CAP=5;
+  const VOICE_BASE=130.81;                              // C3
+  const VOICE_RATIOS=[1,1.125,1.3333,1.5,1.6875];       // major pentatonic
+  const VOICE_LEVEL=0.019;
+  type Voice={osc:OscillatorNode; lvl:GainNode; pan:PannerNode|null};
+  const voices:Voice[]=[];
+  const makeVoice=(freq:number,x:number,y:number,z:number,idx:number):Voice=>{
+    const o=ac.createOscillator(); o.type="sine"; o.frequency.value=freq;
+    const lvl=ac.createGain(); lvl.gain.value=0;
+    // Each voice breathes on its own slow cycle, at a rate that shares no
+    // factor with its neighbours, so the chord never settles into a pulse.
+    const trem=ac.createGain(); trem.gain.value=1;
+    const lfo=ac.createOscillator(); lfo.type="sine";
+    lfo.frequency.value=0.043+idx*0.019;
+    const lg=ac.createGain(); lg.gain.value=0.34;
+    lfo.connect(lg); lg.connect(trem.gain); lfo.start();
+    o.connect(lvl); lvl.connect(trem);
+    let pan:PannerNode|null=null;
+    if (hasPannerNode) {
+      pan=ac.createPanner();
+      pan.panningModel="HRTF"; pan.distanceModel="inverse";
+      pan.refDistance=45; pan.maxDistance=400; pan.rolloffFactor=0.9;
+      if ((pan as any).positionX) {
+        pan.positionX.value=x; pan.positionY.value=y; pan.positionZ.value=z;
+      } else if (typeof (pan as any).setPosition==="function") {
+        (pan as any).setPosition(x,y,z);
+      }
+      trem.connect(pan); pan.connect(sfxBus);
+    } else {
+      trem.connect(sfxBus);
+    }
+    o.start();
+    return {osc:o,lvl,pan};
+  };
+  const moveVoice=(v:Voice,x:number,y:number,z:number)=>{
+    if (!v.pan) return;
+    if ((v.pan as any).positionX) {
+      const t=ac.currentTime;
+      // Glided, not jumped: a panner position snapping each update
+      // produces an audible zipper on the HRTF convolution.
+      v.pan.positionX.setTargetAtTime(x,t,0.09);
+      v.pan.positionY.setTargetAtTime(y,t,0.09);
+      v.pan.positionZ.setTargetAtTime(z,t,0.09);
+    } else if (typeof (v.pan as any).setPosition==="function") {
+      (v.pan as any).setPosition(x,y,z);
+    }
+  };
   const sfxNote3D=(freq:number, type:OscillatorType, t:number, atk:number, dec:number,
                    vol:number, x:number, y:number, z:number)=>{
     const o=ac.createOscillator(); o.type=type; o.frequency.value=freq;
@@ -1398,6 +1453,30 @@ function makeAudio() {
       const t=ac.currentTime;
       sfxNote3D(1760+bright*440,"sine",t,0.003,0.22,0.022*bright,x,y,z);
       sfxNote3D(2637,"sine",t+0.01,0.003,0.14,0.011*bright,x,y,z);
+    },
+    // The standing soundscape. Hand it up to five [x,y,z,energy] anchors
+    // and it parks a held voice on each; hand it an empty list and they
+    // fade out. Voices are a fixed pool that is retuned and repositioned
+    // rather than rebuilt, because starting and stopping oscillators on
+    // every update is what makes generative audio click.
+    skyVoices(list:[number,number,number,number][]) {
+      if (ac.state==="suspended") return;
+      const t=ac.currentTime;
+      const n=Math.min(VOICE_CAP,list.length);
+      for (let i=0;i<n;i++) {
+        const [x,y,z,en]=list[i];
+        // High-energy thoughts sit an octave up, so a bright sky reads
+        // brighter without any change in loudness.
+        const freq=VOICE_BASE*VOICE_RATIOS[i%VOICE_RATIOS.length]*(en>0.62?2:1);
+        let v=voices[i];
+        if (!v) { v=makeVoice(freq,x,y,z,i); voices[i]=v; }
+        // Long glides on both pitch and level: the chord should seem to
+        // have always been there, never to have been switched on.
+        v.osc.frequency.setTargetAtTime(freq,t,1.6);
+        v.lvl.gain.setTargetAtTime(VOICE_LEVEL,t,2.0);
+        moveVoice(v,x,y,z);
+      }
+      for (let i=n;i<voices.length;i++) voices[i].lvl.gain.setTargetAtTime(0,t,0.7);
     },
 
     transition(form: FormType, energy: number) {
@@ -2364,6 +2443,10 @@ export default function AetherCanvas() {
     const stage=(delay:number,dur:number)=>Math.max(0,Math.min(1,(skyEnterT-delay)/dur));
     let skyCompassR=0, prevSweepR=-1;
     const listenFwd=new THREE.Vector3(), listenUp=new THREE.Vector3();
+    // Which stars currently hold a sustained voice, and the star count the
+    // choice was made from — recomputed only when the sky itself changes.
+    let voiceIdx:number[]=[]; let voiceFrom=-1; let voiceT=0;
+    const voiceVec=new THREE.Vector3();
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -3297,6 +3380,51 @@ export default function AetherCanvas() {
           camera.position.x,camera.position.y,camera.position.z,
           listenFwd.x,listenFwd.y,listenFwd.z,
           listenUp.x,listenUp.y,listenUp.z);
+      }
+
+      // Constellation voices. Anchors are chosen from the strongest
+      // thoughts but forced apart in azimuth, because five voices bunched
+      // into one quadrant is a chord stuck to the side of your head rather
+      // than a sky you are standing in. Positions are refreshed at 6Hz —
+      // enough for the chord to swing convincingly as you orbit, cheap
+      // enough that it never shows up in a frame budget.
+      const stars=starsRef.current;
+      if (memSkyMix>0.35&&stars.length) {
+        if (voiceFrom!==stars.length) {
+          voiceFrom=stars.length;
+          const order=stars.map((s,i)=>i).sort((a,b)=>(stars[b].energy??0.5)-(stars[a].energy??0.5));
+          const picked:number[]=[];
+          const azOf=(i:number)=>Math.atan2(stars[i].pos[2],stars[i].pos[0]);
+          for (const i of order) {
+            if (picked.length>=5) break;
+            const a=azOf(i);
+            // Circular distance, so the wrap at ±pi doesn't let two
+            // neighbours through as though they were opposite each other.
+            const clear=picked.every(j=>{
+              let d=Math.abs(a-azOf(j))%(Math.PI*2);
+              if (d>Math.PI) d=Math.PI*2-d;
+              return d>0.9;
+            });
+            if (clear) picked.push(i);
+          }
+          // A sparse sky may not have five well-separated stars; fill out
+          // with whatever is left rather than running a thinner chord.
+          for (const i of order) { if (picked.length>=5) break; if (!picked.includes(i)) picked.push(i); }
+          voiceIdx=picked;
+        }
+        voiceT+=dt;
+        if (voiceT>0.16) {
+          voiceT=0;
+          const anchors=voiceIdx.map(i=>{
+            const s=stars[i];
+            voiceVec.set(s.pos[0],s.pos[1],s.pos[2]).applyMatrix4(memPoints.matrixWorld);
+            return [voiceVec.x,voiceVec.y,voiceVec.z,s.energy??0.5] as [number,number,number,number];
+          });
+          audioRef.current?.skyVoices?.(anchors);
+        }
+      } else if (voiceIdx.length) {
+        voiceIdx=[]; voiceFrom=-1;
+        audioRef.current?.skyVoices?.([]);
       }
       haze.visible=compassOpacity>0.01;
       hazeUniforms.uOpacity.value=compassOpacity*0.62*kGrid;
