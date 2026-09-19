@@ -2058,6 +2058,11 @@ export default function AetherCanvas() {
     memGeo.setAttribute("color",new THREE.BufferAttribute(memCol,3));
     memGeo.setAttribute("aPhase",new THREE.BufferAttribute(memPhase,1));
     memGeo.setAttribute("aFocus",new THREE.BufferAttribute(memFocus,1));
+    // Which stars are currently sounding a sustained voice: 0 for silent,
+    // otherwise the voice's index + 1, so the shader can reproduce that
+    // voice's own breathing rate exactly.
+    const memVoice=new Float32Array(CAP);
+    memGeo.setAttribute("aVoice",new THREE.BufferAttribute(memVoice,1));
     memGeo.setDrawRange(0,0);
     // Memory stars get a procedural lit-glass material instead of a flat
     // gradient sprite — inspired by the material-physics restraint Lusion
@@ -2077,17 +2082,33 @@ export default function AetherCanvas() {
       blending:THREE.AdditiveBlending,
       vertexShader:`
         uniform float uSize;
+        uniform float uSkyMix;
+        uniform float uTime;
         attribute float aPhase;
         attribute float aFocus;
+        attribute float aVoice;
         varying vec3 vColor;
         varying float vPhase;
         varying float vDepth;
         varying float vFocus;
         varying float vRadial;
+        varying float vRes;
         void main(){
           vColor=color;
           vPhase=aPhase;
           vFocus=aFocus;
+          // Resonance. A star holding one of the sustained voices swells
+          // and dims on that voice's own LFO rate — the same numbers the
+          // audio graph uses (0.043 + idx*0.019 Hz), so what you watch is
+          // literally what you hear. Five slow, unsynchronised breaths are
+          // the only motion in the sky that isn't the sweep's, which is
+          // what stops a still field from reading as a screenshot.
+          float res=0.0;
+          if (aVoice>0.5) {
+            float rate=0.043+(aVoice-1.0)*0.019;
+            res=0.5+0.5*sin(uTime*rate*6.2831853+aPhase);
+          }
+          vRes=res*uSkyMix;
           // Distance from the vertical axis — rotation-invariant, so it
           // stays correct as the sky turns, and it's the same measure the
           // reference plane's sweep runs along.
@@ -2098,7 +2119,7 @@ export default function AetherCanvas() {
           // of stars because none happen to sit near the camera, but at
           // full capacity several always do and they balloon into orbs
           // that swallow the frame. A star is a star at any distance.
-          gl_PointSize=min(uSize*(1.0+aFocus*0.5)*(340.0/-mv.z),34.0);
+          gl_PointSize=min(uSize*(1.0+aFocus*0.5)*(1.0+vRes*0.40)*(340.0/-mv.z),34.0);
           gl_Position=projectionMatrix*mv;
         }`,
       fragmentShader:`
@@ -2115,6 +2136,7 @@ export default function AetherCanvas() {
         varying float vDepth;
         varying float vFocus;
         varying float vRadial;
+        varying float vRes;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
           float r=length(uv);
@@ -2156,6 +2178,12 @@ export default function AetherCanvas() {
           float fk=uHover*uSkyMix;
           col*=mix(1.0,mix(0.3,1.3,vFocus),fk);
           alpha*=mix(1.0,mix(0.42,1.0,vFocus),fk);
+          // The other half of resonance: a sounding star carries a soft
+          // corona in its own colour. Kept to a glow rather than a ring or
+          // a marker — the sky should look like it is singing, not like it
+          // has been annotated.
+          col+=vColor*vRes*0.5;
+          alpha=min(1.0,alpha+vRes*0.16*(1.0-smoothstep(0.2,1.0,r)));
           // The sweep reads each star as it passes over it. Without this
           // the wave and the stars were two systems sharing a screen; with
           // it, the plane is visibly measuring the thing it's drawn under.
@@ -2445,7 +2473,7 @@ export default function AetherCanvas() {
     const listenFwd=new THREE.Vector3(), listenUp=new THREE.Vector3();
     // Which stars currently hold a sustained voice, and the star count the
     // choice was made from — recomputed only when the sky itself changes.
-    let voiceIdx:number[]=[]; let voiceFrom=-1; let voiceT=0;
+    let voiceIdx:number[]=[]; let voiceBase:number[]=[]; let voiceFrom=-1; let voiceT=0;
     const voiceVec=new THREE.Vector3();
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
@@ -3410,8 +3438,28 @@ export default function AetherCanvas() {
           // A sparse sky may not have five well-separated stars; fill out
           // with whatever is left rather than running a thinner chord.
           for (const i of order) { if (picked.length>=5) break; if (!picked.includes(i)) picked.push(i); }
-          voiceIdx=picked;
+          voiceBase=picked;
         }
+        // Tapping a star hands it a voice. The chord is the sky's, but the
+        // one you chose should be in it — otherwise selection is a card
+        // that appears and nothing else, and the instrument never
+        // acknowledges the choice in the medium it's built out of. The
+        // quietest existing voice steps aside rather than the chord
+        // growing, so the balance never shifts.
+        const sel=selectedIdRef.current!=null
+          ? stars.findIndex(s=>s.id===selectedIdRef.current) : -1;
+        voiceIdx=sel>=0&&!voiceBase.includes(sel)
+          ? [sel,...voiceBase.slice(0,Math.max(0,voiceBase.length-1))]
+          : voiceBase;
+        // Mirror the assignment into the geometry so the stars that are
+        // sounding are the stars that visibly resonate.
+        let voiceDirty=false;
+        for (let i=0;i<CAP;i++) {
+          const k=voiceIdx.indexOf(i);
+          const v=k<0?0:k+1;
+          if (memVoice[i]!==v) { memVoice[i]=v; voiceDirty=true; }
+        }
+        if (voiceDirty) memGeo.attributes.aVoice.needsUpdate=true;
         voiceT+=dt;
         if (voiceT>0.16) {
           voiceT=0;
@@ -3423,7 +3471,8 @@ export default function AetherCanvas() {
           audioRef.current?.skyVoices?.(anchors);
         }
       } else if (voiceIdx.length) {
-        voiceIdx=[]; voiceFrom=-1;
+        voiceIdx=[]; voiceBase=[]; voiceFrom=-1;
+        memVoice.fill(0); memGeo.attributes.aVoice.needsUpdate=true;
         audioRef.current?.skyVoices?.([]);
       }
       haze.visible=compassOpacity>0.01;
