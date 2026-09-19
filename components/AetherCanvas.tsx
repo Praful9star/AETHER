@@ -2150,13 +2150,26 @@ export default function AetherCanvas() {
           // slot) rather than in lockstep — a sky where every star pulses
           // in unison reads as a UI animation, not a sky.
           float twinkle=1.0-uSkyMix*0.22*(0.5+0.5*sin(uTime*1.6+vPhase*6.283));
-          vec3 body=vColor*(0.5+0.5*diff)*twinkle;
+          // Ambient floor raised in sky mode. A half-lit sphere is right for
+          // a planet and wrong for a star: at close range the unlit side
+          // went almost black and each star read as two different colours
+          // stuck together rather than one glowing body.
+          float lambert=mix(0.5,0.66,uSkyMix)+mix(0.5,0.34,uSkyMix)*diff;
+          vec3 body=vColor*lambert*twinkle;
           // The lit-glass "weight" (rim + specular glint) is a sky-mode
           // read — on the default view these stars are a quiet background
           // presence, not bright marbles competing with the galaxy and the
           // whisper text in front of them.
           vec3 rim=vColor*fresnel*0.4*uSkyMix;
-          vec3 col=body+rim+vec3(1.0)*spec*0.6*uSkyMix*twinkle;
+          // The glint carries the star's own hue rather than being pure
+          // white. A white highlight on top of additive blending drove
+          // every bright star's core to the same yellow-white, so a red
+          // star and an orange star arrived on screen identical — the
+          // colour coding that places each thought by feeling was being
+          // destroyed at exactly the stars you look at first.
+          vec3 tint=normalize(vColor+vec3(0.001));
+          vec3 spc=mix(vec3(1.0),tint*1.25,0.55)*spec*0.55*uSkyMix*twinkle;
+          vec3 col=body+rim+spc;
           // Atmospheric perspective. Without this every star renders at
           // identical intensity no matter how far away it is, and the
           // whole field reads as a flat scatter of dots on black. Distant
@@ -2191,6 +2204,18 @@ export default function AetherCanvas() {
             float ping=exp(-pow((vRadial-uSweepR)/max(0.001,uSweepW),2.0))*uSkyMix;
             col+=col*ping*1.9+vec3(0.35,0.42,0.6)*ping*0.5;
             alpha=min(1.0,alpha+ping*0.35);
+          }
+          // Hue-preserving highlight rolloff. Letting each channel clip at
+          // 1.0 independently is what turns a saturated star white from
+          // the inside out: red pins first, then green, and the core ends
+          // up a colourless blob with a coloured ring around it. Rolling
+          // off the brightest channel and scaling the other two with it
+          // keeps the ratios — so a bright star reads as bright *and*
+          // still red.
+          float mx=max(max(col.r,col.g),col.b);
+          if (mx>0.0001) {
+            float rolled=mx/(1.0+mx*0.34);
+            col*=mix(1.0,rolled/mx,uSkyMix);
           }
           gl_FragColor=vec4(col,alpha);
         }`,
@@ -3319,10 +3344,12 @@ export default function AetherCanvas() {
             // sparse sky most of its names for no reason — the point is to
             // dodge the UI, not to fence off half the frame.
             const inBanner=y<70&&x>w*0.26&&x<w*0.74;
-            const inQuote=y>h*0.16&&y<h*0.31&&x>w*0.26&&x<w*0.74;
+            // The quote band is no longer fenced off: sky mode hides the
+            // hero line, so this is now the best real estate on screen
+            // instead of a no-go strip through the middle of the frame.
             const inBrand=y<h*0.1&&x<w*0.18;
             const inControls=y<h*0.23&&x>w*0.9;
-            const inHeaderBand=inBanner||inQuote||inBrand||inControls;
+            const inHeaderBand=inBanner||inBrand||inControls;
             const inFooterBand=y>h*0.83&&x>w*0.28&&x<w*0.72;
             // Labels are centre-anchored, so one near either edge runs off
             // the frame and gets sliced mid-word.
@@ -3994,8 +4021,13 @@ export default function AetherCanvas() {
         ))}
       </div>
 
-      {/* Whisper */}
-      <div style={{position:"absolute",left:0,right:0,top:"18%",display:"flex",justifyContent:"center",padding:"0 36px",pointerEvents:"none",opacity:zen?0:1,transition:"opacity 1.2s ease"}}>
+      {/* Whisper. Hidden in sky mode: it is the galaxy view's headline, and
+          leaving it up meant the observatory was wearing the homepage's
+          clothes — a 34px serif marketing line sitting as the loudest thing
+          on screen above your own stars, competing with the sky's own
+          banner two rows above it. Your words are still there in sky mode,
+          on each star's label and card, which is where they belong. */}
+      <div style={{position:"absolute",left:0,right:0,top:"18%",display:"flex",justifyContent:"center",padding:"0 36px",pointerEvents:"none",opacity:(zen||skyMode)?0:1,transition:"opacity 1.2s ease"}}>
         <AnimatePresence mode="wait">
           <motion.div
             key={loading?"__loading__":whisper}
@@ -4026,7 +4058,10 @@ export default function AetherCanvas() {
 
       {/* First Contact — guided first whisper */}
       <AnimatePresence>
-        {firstContact&&!zen&&!loading&&(
+        {/* Not in sky mode: prompts to write your first thought have no
+            business inside the view for reading the thoughts you already
+            have. */}
+        {firstContact&&!zen&&!loading&&!skyMode&&(
           <motion.div
             initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} exit={{opacity:0,y:10}}
             transition={{duration:1.4,ease:[0.22,1,0.36,1]}}
