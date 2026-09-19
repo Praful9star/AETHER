@@ -2071,7 +2071,7 @@ export default function AetherCanvas() {
     // each star the read of a small lit sphere, not a blob of glow. Scoped
     // to just these ≤120 memory-star points, not the 40,000-particle
     // galaxy — cheap, and isolated from everything else on the canvas.
-    const memUniforms={uSize:{value:3.6},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0},
+    const memUniforms={uSize:{value:3.6},uMaxPx:{value:34},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0},
       uNear:{value:30},uFar:{value:140},uHover:{value:0},
       uSweepR:{value:-1},uSweepW:{value:4}};
     const memMat=new THREE.ShaderMaterial({
@@ -2082,6 +2082,7 @@ export default function AetherCanvas() {
       blending:THREE.AdditiveBlending,
       vertexShader:`
         uniform float uSize;
+        uniform float uMaxPx;
         uniform float uSkyMix;
         uniform float uTime;
         attribute float aPhase;
@@ -2119,7 +2120,7 @@ export default function AetherCanvas() {
           // of stars because none happen to sit near the camera, but at
           // full capacity several always do and they balloon into orbs
           // that swallow the frame. A star is a star at any distance.
-          gl_PointSize=min(uSize*(1.0+aFocus*0.5)*(1.0+vRes*0.40)*(340.0/-mv.z),34.0);
+          gl_PointSize=min(uSize*(1.0+aFocus*0.5)*(1.0+vRes*0.40)*(340.0/-mv.z),uMaxPx);
           gl_Position=projectionMatrix*mv;
         }`,
       fragmentShader:`
@@ -2268,6 +2269,10 @@ export default function AetherCanvas() {
     // The unlit edge colours, plus which two stars each edge joins, kept so
     // focusing a star can re-light just its own figure. Rewritten only when
     // the focused star changes, never per frame.
+    // How full the sky is, 0 at 12 stars or fewer and 1 at capacity. Drives
+    // star size down as thoughts accumulate, so a crowded sky draws finer
+    // points instead of merging into blobs.
+    let memDens=0;
     let memSegColBase:Float32Array|null=null;
     let memEdgeIdx:[number,number][]=[];
     let memLitFor=-2;
@@ -2799,6 +2804,16 @@ export default function AetherCanvas() {
           } else { memPos[i*3]=memPos[i*3+1]=memPos[i*3+2]=1e5; }
         }
         memGeo.setDrawRange(0,n);
+        // A sky of 8 and a sky of 120 should not draw stars at the same
+        // size. The shell they sit on does not grow as you add thoughts,
+        // so at full capacity neighbouring stars — and their bloom — merge
+        // into single orange masses and you can no longer tell that there
+        // are two thoughts there. Scale both the base size and the
+        // near-distance clamp down as the sky fills: a crowded sky gets
+        // finer points, which is also how a real star chart handles
+        // density. Purely a rendering decision; where each star sits is
+        // meaning, and stays untouched.
+        memDens=Math.max(0,Math.min(1,(n-12)/88));
         memGeo.attributes.position.needsUpdate=true;
         memGeo.attributes.color.needsUpdate=true;
         // THREE.Points.raycast() (used for tap-to-select) checks
@@ -3289,7 +3304,14 @@ export default function AetherCanvas() {
       core.scale.set(14*pulse,14*pulse,1);
       coreMat.opacity=0.5+displayEnergy*0.45;
       memSkyMix+=((skyModeOn?1:0)-memSkyMix)*(1-Math.exp(-3*dt));
-      memUniforms.uSize.value=1.8+memSkyMix*5.2;
+      // The sky-mode half of the size shrinks as the sky fills (memDens).
+      // Only that half: on the default view these stars are a quiet
+      // background presence at a fixed 1.8, and they should not change
+      // because you happened to write more thoughts.
+      memUniforms.uSize.value=1.8+memSkyMix*5.2*(1-memDens*0.38);
+      // Same for the near-distance clamp, and likewise faded in by
+      // memSkyMix so the default view keeps the original 34px ceiling.
+      memUniforms.uMaxPx.value=34*(1-memDens*0.45*memSkyMix);
       memUniforms.uOpacity.value=0.32+memSkyMix*0.55;
       memUniforms.uSkyMix.value=memSkyMix;
       memUniforms.uTime.value=t;
