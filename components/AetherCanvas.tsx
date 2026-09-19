@@ -1199,6 +1199,63 @@ function makeAudio() {
     const p=ac.createStereoPanner(); p.pan.value=Math.max(-1,Math.min(1,pan));
     node.connect(p); p.connect(sfxBus);
   };
+
+  // ── True spatial audio ──────────────────────────────────────────────
+  // The sky's sounds used to pan by a star's world X coordinate, which has
+  // nothing to do with where you're looking — orbit halfway round and a
+  // star now on your right still came out of the left speaker. That isn't
+  // spatial, it's arbitrary. These route through a real HRTF PannerNode
+  // positioned at the star's actual coordinates, with the listener locked
+  // to the camera, so a sound genuinely arrives from where the thing is.
+  // The ambient bed stays in plain stereo on purpose: binauralising a
+  // sustained pad muddies it, and the convention everywhere that does this
+  // well is bed in stereo, discrete events in 3D.
+  const hasPannerNode=typeof ac.createPanner==="function";
+  const setListener=(px:number,py:number,pz:number,
+                     fx:number,fy:number,fz:number,
+                     ux:number,uy:number,uz:number)=>{
+    const L=ac.listener as any;
+    if (L.positionX) {
+      const t=ac.currentTime;
+      L.positionX.setTargetAtTime(px,t,0.02);
+      L.positionY.setTargetAtTime(py,t,0.02);
+      L.positionZ.setTargetAtTime(pz,t,0.02);
+      L.forwardX.setTargetAtTime(fx,t,0.02);
+      L.forwardY.setTargetAtTime(fy,t,0.02);
+      L.forwardZ.setTargetAtTime(fz,t,0.02);
+      L.upX.setTargetAtTime(ux,t,0.02);
+      L.upY.setTargetAtTime(uy,t,0.02);
+      L.upZ.setTargetAtTime(uz,t,0.02);
+    } else if (typeof L.setPosition==="function") {
+      // Safari and older engines still expose only the legacy setters.
+      L.setPosition(px,py,pz); L.setOrientation(fx,fy,fz,ux,uy,uz);
+    }
+  };
+  const spatialOut=(node:AudioNode, x:number, y:number, z:number)=>{
+    if (!hasPannerNode) { node.connect(sfxBus); return; }
+    const p=ac.createPanner();
+    p.panningModel="HRTF";
+    p.distanceModel="inverse";
+    // World units here run roughly 50-130 from origin, so the reference
+    // distance sits just inside the constellation and the rolloff stays
+    // audible across the whole field rather than dropping to nothing at
+    // the far side.
+    p.refDistance=45; p.maxDistance=400; p.rolloffFactor=0.9;
+    if ((p as any).positionX) {
+      p.positionX.value=x; p.positionY.value=y; p.positionZ.value=z;
+    } else if (typeof (p as any).setPosition==="function") {
+      (p as any).setPosition(x,y,z);
+    }
+    node.connect(p); p.connect(sfxBus);
+  };
+  const sfxNote3D=(freq:number, type:OscillatorType, t:number, atk:number, dec:number,
+                   vol:number, x:number, y:number, z:number)=>{
+    const o=ac.createOscillator(); o.type=type; o.frequency.value=freq;
+    const g=ac.createGain();
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+atk);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+atk+dec);
+    o.connect(g); spatialOut(g,x,y,z); o.start(t); o.stop(t+atk+dec+0.1);
+  };
   const sfxNote=(freq:number, type:OscillatorType, t:number, atk:number, dec:number, vol:number, pan=0)=>{
     const o=ac.createOscillator(); o.type=type; o.frequency.value=freq;
     const g=ac.createGain();
@@ -1319,23 +1376,28 @@ function makeAudio() {
         sfxNote(261.6,"sine",t+0.05,0.2,1.6,0.024,0);
       }
     },
-    // A clear, close tone — this one is a direct answer to a tap, so it
-    // reads as confirmation rather than ambience.
-    skySelect(pan=0) {
+    // Keeps the binaural listener locked to the camera so sounds stay put
+    // in the world while you orbit around them.
+    setListener,
+    // A clear, close tone answering a tap — placed at the star you tapped,
+    // so the confirmation arrives from the thing you touched.
+    skySelect(x=0, y=0, z=0) {
       if (ac.state==="suspended") ac.resume();
       const t=ac.currentTime;
-      sfxNote(880,"sine",t,0.004,0.5,0.05,pan);
-      sfxNote(1318.5,"sine",t+0.02,0.004,0.36,0.03,pan*0.6);
-      sfxNote(440,"triangle",t,0.01,0.7,0.022,pan*0.3);
+      sfxNote3D(880,"sine",t,0.004,0.5,0.06,x,y,z);
+      sfxNote3D(1318.5,"sine",t+0.02,0.004,0.36,0.036,x,y,z);
+      sfxNote3D(440,"triangle",t,0.01,0.7,0.026,x,y,z);
     },
     // Struck once per star as the sweep crosses it — tiny, high and short,
     // so a field of them reads as the instrument counting rather than as
-    // a melody competing with the bed.
-    skyPing(pan=0, bright=1) {
+    // a melody competing with the bed. Positioned at the star, which is
+    // what makes a sweep audibly travel across the sky instead of just
+    // chiming somewhere in the middle of your head.
+    skyPing(x=0, y=0, z=0, bright=1) {
       if (ac.state==="suspended") return;
       const t=ac.currentTime;
-      sfxNote(1760+bright*440,"sine",t,0.003,0.22,0.016*bright,pan);
-      sfxNote(2637,"sine",t+0.01,0.003,0.14,0.008*bright,pan*0.5);
+      sfxNote3D(1760+bright*440,"sine",t,0.003,0.22,0.022*bright,x,y,z);
+      sfxNote3D(2637,"sine",t+0.01,0.003,0.14,0.011*bright,x,y,z);
     },
 
     transition(form: FormType, energy: number) {
@@ -2301,6 +2363,7 @@ export default function AetherCanvas() {
     let skyEnterT=0;
     const stage=(delay:number,dur:number)=>Math.max(0,Math.min(1,(skyEnterT-delay)/dur));
     let skyCompassR=0, prevSweepR=-1;
+    const listenFwd=new THREE.Vector3(), listenUp=new THREE.Vector3();
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
     let parX=0,parY=0;
     const updateCam=(now:number)=>{
@@ -2709,6 +2772,14 @@ export default function AetherCanvas() {
         memLineMat.resolution.set(W,H);
         composer.render();
         return url;
+      },
+      // Current world position of a star by index — the stored coordinates
+      // are pre-rotation, and the sky turns.
+      starWorldPos(i:number):[number,number,number]|null {
+        const s=starsRef.current[i];
+        if (!s) return null;
+        const v=new THREE.Vector3(s.pos[0],s.pos[1],s.pos[2]).applyMatrix4(memPoints.matrixWorld);
+        return [v.x,v.y,v.z];
       },
       setSkyMode(on:boolean) {
         skyModeOn=on;
@@ -3201,17 +3272,32 @@ export default function AetherCanvas() {
       memUniforms.uSweepW.value=Math.max(2,skyCompassR*0.055);
       if (sweepR>0&&prevSweepR>0&&sweepR>prevSweepR&&memSkyMix>0.7) {
         let struck=0;
+        const pv=new THREE.Vector3();
         for (const s of starsRef.current) {
           if (struck>=3) break;
           const sr=Math.hypot(s.pos[0],s.pos[2]);
           if (sr>prevSweepR&&sr<=sweepR) {
-            audioRef.current?.skyPing?.(Math.max(-1,Math.min(1,s.pos[0]/Math.max(1,skyCompassR))),
-              0.6+Math.min(1,s.energy??0.5)*0.5);
+            // World position, not the raw stored one — the sky rotates, so
+            // the sound has to follow where the star actually is now.
+            pv.set(s.pos[0],s.pos[1],s.pos[2]).applyMatrix4(memPoints.matrixWorld);
+            audioRef.current?.skyPing?.(pv.x,pv.y,pv.z,0.6+Math.min(1,s.energy??0.5)*0.5);
             struck++;
           }
         }
       }
       prevSweepR=sweepR;
+
+      // Listener rides the camera so the whole field stays anchored in
+      // place as you orbit — the thing that separates real spatial audio
+      // from stereo tricks.
+      if (memSkyMix>0.02) {
+        camera.getWorldDirection(listenFwd);
+        listenUp.set(0,1,0).applyQuaternion(camera.quaternion);
+        audioRef.current?.setListener?.(
+          camera.position.x,camera.position.y,camera.position.z,
+          listenFwd.x,listenFwd.y,listenFwd.z,
+          listenUp.x,listenUp.y,listenUp.z);
+      }
       haze.visible=compassOpacity>0.01;
       hazeUniforms.uOpacity.value=compassOpacity*0.62*kGrid;
       hazeUniforms.uTime.value=t;
@@ -3456,7 +3542,13 @@ export default function AetherCanvas() {
 
   useEffect(()=>{sceneRef.current.onStarTap=(i:number)=>{
     const s=starsRef.current[i]; if (!s) return;
-    if (skyModeRef.current) { setSelectedStar(s); audioRef.current?.skySelect?.(0); }
+    if (skyModeRef.current) {
+      setSelectedStar(s);
+      // Placed at the star, so the confirmation comes from the thing you
+      // touched rather than from the middle of your head.
+      const wp=sceneRef.current.starWorldPos?.(i);
+      audioRef.current?.skySelect?.(wp?.[0]??0,wp?.[1]??0,wp?.[2]??0);
+    }
     else revisit(s);
   };});
 
