@@ -2503,6 +2503,14 @@ export default function AetherCanvas() {
     // reads cheap — nothing that arrives all at the same instant feels
     // built. Order carries meaning here: your stars land first (the sky is
     // already yours), then the instrument assembles around them to read it.
+    // Wall-clock seconds since sky mode was entered, NOT accumulated dt.
+    // dt is clamped to 50ms a frame so the simulation stays stable across a
+    // tab-switch, which is right for physics and wrong for a timeline: on
+    // anything under 20fps the clamp makes the power-on run in slow motion,
+    // and the later a stage sits the worse it gets. Measured at ~3.5fps the
+    // choreography took about six times its intended length. A timeline
+    // should run on the clock.
+    let skyEnterAt=0;
     let skyEnterT=0;
     const stage=(delay:number,dur:number)=>Math.max(0,Math.min(1,(skyEnterT-delay)/dur));
     let skyCompassR=0, prevSweepR=-1;
@@ -2980,7 +2988,7 @@ export default function AetherCanvas() {
         audioRef.current?.skyMode?.(on);
         if (on) {
           skyRotBase=memPoints.rotation.y; skyRotT=0;
-          skyEnterT=0;
+          skyEnterAt=performance.now(); skyEnterT=0;
           skyPhiEase=true;
           skyPrevRadius=cam.targetRadius;
           let maxR=42;
@@ -3061,10 +3069,17 @@ export default function AetherCanvas() {
       // centre, then the compass resolves, then the connections engage. On
       // the way out memSkyMix/compassOpacity handle the fade, so these
       // stages only gate the arrival.
-      if (skyModeOn) skyEnterT+=dt;
+      if (skyModeOn) skyEnterT=(now-skyEnterAt)/1000;
       const kGrid=skyModeOn?stage(0.10,0.75):1;
       const kCompass=skyModeOn?stage(0.62,0.5):1;
       const kLinks=skyModeOn?stage(0.80,0.55):1;
+      // Names last, and only once the camera has settled. They were the one
+      // element not staged at all, so the loudest thing on screen arrived
+      // first — at 150ms the sky was still dissolving and the text was
+      // already at full strength, stacked three deep on itself because the
+      // declutter was resolving against positions that were still moving.
+      // Held back to here, they land on a sky that has stopped moving.
+      const kNames=skyModeOn?stage(1.15,0.7):1;
 
       // Screensaver idle check
       const idle=now-lastActRef.current;
@@ -3422,7 +3437,7 @@ export default function AetherCanvas() {
             if (isHovered&&x>-60&&x<w+60&&y>-60&&y<h+60) {
               placed.push({x,y});
               el.style.left=x+"px"; el.style.top=y+"px";
-              el.style.opacity=String(memSkyMix);
+              el.style.opacity=String(memSkyMix*kNames);
               return;
             }
             // Keep clear of the persistent top banner + quote text band and
@@ -3458,7 +3473,7 @@ export default function AetherCanvas() {
             el.style.left=x+"px"; el.style.top=y+"px";
             // Unrelated stars' labels recede while something is focused,
             // matching what the shader does to the stars themselves.
-            el.style.opacity=String(memSkyMix*0.85*(1-hoverMix*0.72));
+            el.style.opacity=String(memSkyMix*kNames*0.85*(1-hoverMix*0.72));
           });
           if (!lockedOn&&reticle.style.opacity!=="0") reticle.style.opacity="0";
         }
