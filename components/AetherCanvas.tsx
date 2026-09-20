@@ -1805,7 +1805,19 @@ export default function AetherCanvas() {
     const reticleStyle=document.createElement("style");
     reticleStyle.textContent=`
       @keyframes aeReticleSpin{to{transform:rotate(360deg)}}
-      @keyframes aeReticlePulse{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:.45;transform:scale(1.06)}}`;
+      @keyframes aeReticlePulse{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:.45;transform:scale(1.06)}}
+      /* On a phone the sky banner printed straight over the brand on the
+         left and the galaxy name on the right — text on top of text, at
+         the very top of the screen, the first thing you see when the sky
+         opens. Shortening it was not enough: even the bare title is 144px
+         and it is centred across the full width, so at 390px it still
+         straddles both. It is dropped entirely below 560px instead. The
+         bottom hint bar already says "TAP A STAR TO REVISIT", so nothing
+         is actually lost, and a phone has no room to spare.
+         !important because the element carries inline styles. */
+      @media (max-width:560px){
+        .ae-skybanner{display:none!important}
+      }`;
     labelLayer.appendChild(reticleStyle);
     const reticle=document.createElement("div");
     reticle.style.cssText=`position:absolute;left:0;top:0;width:54px;height:54px;
@@ -2996,7 +3008,17 @@ export default function AetherCanvas() {
             const d=Math.hypot(s.pos[0],s.pos[1],s.pos[2]);
             if (d>maxR) maxR=d;
           });
-          cam.targetRadius=Math.max(55,Math.min(130,maxR+30));
+          // Frame for the shape of the screen, not just the size of the
+          // constellation. A perspective camera's fov is vertical, so a
+          // tall phone viewport sees *less* horizontally than a laptop —
+          // and the constellation spreads horizontally, around you. Framed
+          // at the landscape distance, a portrait screen showed a narrow
+          // slice across the top with the bottom half empty, which read as
+          // "I barely have any stars" rather than as a sky. Pull back on
+          // narrow aspects so the whole ring fits across.
+          const aspect=Math.max(0.35,mount.clientWidth/Math.max(1,mount.clientHeight));
+          const portraitPull=aspect<1?Math.pow(1/aspect,0.6):1;
+          cam.targetRadius=Math.max(55,Math.min(170,(maxR+30)*portraitPull));
           // Placed well outside the camera's orbit sphere — a horizon ring
           // around the whole scene, not a marker the camera can wander
           // into. (Labels are also screen-space sized now, so this is a
@@ -4347,8 +4369,8 @@ export default function AetherCanvas() {
             initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
             style={{position:"absolute",left:0,right:0,top:20,display:"flex",justifyContent:"center",pointerEvents:"none",zIndex:4}}
           >
-            <div style={{background:"rgba(9,6,18,.88)",border:`1px solid ${a44}`,borderRadius:999,padding:"8px 20px",fontSize:10.5,letterSpacing:"0.16em",color:"rgba(222,217,247,.85)",textAlign:"center"}}>
-              EXPLORING YOUR SKY · every star sits where its feeling belongs · tap one to remember it
+            <div className="ae-skybanner" style={{background:"rgba(9,6,18,.88)",border:`1px solid ${a44}`,borderRadius:999,padding:"8px 20px",fontSize:10.5,letterSpacing:"0.16em",color:"rgba(222,217,247,.85)",textAlign:"center"}}>
+              EXPLORING YOUR SKY<span className="ae-skybanner-more"> · every star sits where its feeling belongs · tap one to remember it</span>
             </div>
           </motion.div>
         )}
