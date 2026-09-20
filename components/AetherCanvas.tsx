@@ -3370,7 +3370,9 @@ export default function AetherCanvas() {
         } else {
           memPoints.updateMatrixWorld(); // rotation.y was just set above this frame
           const w=mount.clientWidth,h=mount.clientHeight;
-          const placed: {x:number;y:number}[]=[];
+          // Each placed label carries its own half-width: the collision
+          // test compares real footprints rather than assuming one size.
+          const placed: {x:number;y:number;half:number}[]=[];
           const tmpV=new THREE.Vector3();
           const selId=selectedIdRef.current;
           let lockedOn=false;
@@ -3455,12 +3457,46 @@ export default function AetherCanvas() {
             // always shows its name, declutter rules and header band
             // included. If you're asking about it, withholding the one
             // thing you're asking for is absurd.
+            // Measured once per label and cached on the element. The text
+            // never changes, and offsetWidth on every visible label every
+            // frame is a forced layout.
+            const txtNode=el.lastElementChild as HTMLElement|null;
+            let tw=Number(el.dataset.tw||0);
+            if (!tw&&txtNode) { tw=txtNode.offsetWidth; if (tw) el.dataset.tw=String(tw); }
+            const half=(tw||150)/2;
             const isHovered=idx===focusIdx;
             if (isHovered&&x>-60&&x<w+60&&y>-60&&y<h+60) {
-              placed.push({x,y});
+              placed.push({x,y,half});
               el.style.left=x+"px"; el.style.top=y+"px";
               el.style.opacity=String(memSkyMix*kNames);
+              // This branch deliberately skips the edge guard the other
+              // labels obey, so the name of the star you are pointing at
+              // could run off the side and be cut in half — the one label
+              // that must be readable, sliced. Barely visible at 1440px,
+              // glaring on a 390px phone.
+              //
+              // Slide the text back into frame and leave the stem where it
+              // is, on the star. Moving the whole element would drag the
+              // leader off its target; a chart slides the text along the
+              // leader instead. Width is measured once per label and cached
+              // — offsetWidth on every visible label every frame is a
+              // forced layout, and the text never changes.
+              const txtEl=txtNode;
+              if (txtEl) {
+                const pad=10;
+                let shift=0;
+                if (x-half<pad) shift=pad-(x-half);
+                else if (x+half>w-pad) shift=(w-pad)-(x+half);
+                const want=shift?`translateX(${Math.round(shift)}px)`:"";
+                if (txtEl.style.transform!==want) txtEl.style.transform=want;
+              }
               return;
+            }
+            // Any shift from a previous frame belongs to the focused label
+            // only; clear it once this one is no longer the focus.
+            {
+              const txtEl=el.lastElementChild as HTMLElement|null;
+              if (txtEl&&txtEl.style.transform) txtEl.style.transform="";
             }
             // Keep clear of the persistent top banner + quote text band and
             // the input bar at the bottom — a truncated thought sitting
@@ -3484,14 +3520,21 @@ export default function AetherCanvas() {
             // circle around its anchor. These are ~170px wide and ~14px
             // tall, so a circular test lets neighbours sit right on top of
             // each other — which is exactly what a full sky looked like.
-            const collides=placed.some(pt=>Math.abs(pt.x-x)<172&&Math.abs(pt.y-y)<24);
+            // Real footprints, both axes. The old test assumed every label
+            // was 172px wide and, worse, guarded only 24px vertically — but
+            // a label is its stem, its tick and its text, about 45px tall.
+            // Two labels 27px apart passed the test and printed straight
+            // through each other. Invisible at 1440px where there is room
+            // to spread; on a phone it was most of the sky.
+            const collides=placed.some(pt=>
+              Math.abs(pt.x-x)<(half+pt.half+14)&&Math.abs(pt.y-y)<46);
             // And a hard cap, because a star chart names its notable stars,
             // not all of them. The rest are one hover away.
             if (inHeaderBand||inFooterBand||offEdge||collides
                 ||placed.length>=LABEL_BUDGET||y<-60||y>h+60) {
               el.style.opacity="0"; return;
             }
-            placed.push({x,y});
+            placed.push({x,y,half});
             el.style.left=x+"px"; el.style.top=y+"px";
             // Unrelated stars' labels recede while something is focused,
             // matching what the shader does to the stars themselves.
