@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
+import ShareGalaxy from "@/components/ShareGalaxy";
 
 interface Props {
   params: { id: string };
@@ -48,77 +49,173 @@ export default async function WhisperPage({ params }: Props) {
 
   const palette = w?.palette ?? ["#0d0221", "#4c1d95", "#a78bfa"];
   const [dark, mid, bright] = palette;
+  // Stable per-whisper, so a shared link always draws the same galaxy
+  // rather than a different one on every open.
+  const seed = Array.from(params.id).reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) || 1;
 
   return (
     <div
       style={{
+        position: "relative",
         minHeight: "100vh",
-        background: `radial-gradient(ellipse at center, ${mid}55 0%, ${dark} 70%)`,
+        overflow: "hidden",
+        background: `radial-gradient(ellipse at 50% 42%, ${mid}33 0%, ${dark} 62%, #04030c 100%)`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        fontFamily: "serif",
-        padding: "40px 24px",
+        padding: "56px 24px",
       }}
     >
-      <div className="text-center max-w-2xl">
+      {/* The galaxy this whisper became. Behind the words, not competing
+          with them — the page is still there to be read. */}
+      <div style={{ position: "absolute", inset: 0, opacity: 0.95 }}>
+        <ShareGalaxy palette={palette} form={w?.form ?? "spiral"} seed={seed} />
+      </div>
+      {/* Keeps the words legible without dimming the galaxy's core, which is
+          the brightest and most interesting part of it. A centre-dark vignette
+          did exactly the wrong thing: it hid the subject to protect the
+          caption. This darkens the edges instead, and the text carries its
+          own shadow. */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(ellipse at 50% 50%, transparent 0%, rgba(4,3,12,.30) 58%, rgba(4,3,12,.72) 100%)",
+        }}
+      />
+
+      <div style={{ position: "relative", textAlign: "center", maxWidth: 680 }}>
         <p
-          className="text-sm tracking-[0.3em] mb-2"
-          style={{ color: "rgba(255,255,255,0.3)" }}
+          style={{
+            fontFamily: "var(--font-sans), Inter, Arial, sans-serif",
+            fontSize: 10,
+            letterSpacing: "0.34em",
+            color: "rgba(226,222,255,.52)",
+            textShadow: "0 1px 10px rgba(0,0,0,.9)",
+            marginBottom: 10,
+          }}
         >
           A WHISPER TO THE VOID
         </p>
         <h1
-          className="text-4xl font-bold tracking-[0.3em] mb-12"
-          style={{ color: "rgba(255,255,255,0.8)" }}
+          style={{
+            fontFamily: "var(--font-sans), Inter, Arial, sans-serif",
+            fontSize: 13,
+            fontWeight: 400,
+            letterSpacing: "0.5em",
+            color: "rgba(240,238,255,.85)",
+            textShadow: "0 1px 12px rgba(0,0,0,.9)",
+            marginBottom: 44,
+          }}
         >
           AETHER
         </h1>
 
         {w ? (
           <>
+            {/* The person's own words lead. The line Aether wrote back is the
+                answer to them, so it cannot come first. */}
+            <p
+              style={{
+                fontFamily: "var(--font-serif), Georgia, serif",
+                fontSize: "clamp(15px, 2.2vw, 18px)",
+                color: "rgba(232,228,255,.62)",
+                textShadow: "0 1px 10px rgba(0,0,0,.85)",
+                marginBottom: 22,
+              }}
+            >
+              &ldquo;{w.thought}&rdquo;
+            </p>
+            <div
+              style={{
+                width: 42,
+                height: 1,
+                margin: "0 auto 22px",
+                background: `linear-gradient(to right, transparent, ${bright}aa, transparent)`,
+              }}
+            />
             <blockquote
-              className="text-2xl md:text-3xl italic leading-relaxed mb-8"
-              style={{ color: "rgba(255,255,255,0.85)", borderLeft: `3px solid ${bright}`, paddingLeft: "1.5rem" }}
+              style={{
+                fontFamily: "var(--font-serif), Georgia, serif",
+                fontStyle: "italic",
+                fontSize: "clamp(22px, 4vw, 36px)",
+                lineHeight: 1.5,
+                color: "#f3f0ff",
+                textShadow: `0 0 46px ${bright}55, 0 2px 14px rgba(0,0,0,.92), 0 1px 3px rgba(0,0,0,.9)`,
+                margin: "0 0 34px",
+              }}
             >
               &ldquo;{w.whisper}&rdquo;
             </blockquote>
 
-            <p
-              className="text-sm mb-8"
-              style={{ color: "rgba(255,255,255,0.3)" }}
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                justifyContent: "center",
+                alignItems: "center",
+                marginBottom: 44,
+              }}
             >
-              {w.thought}
-            </p>
-
-            <div className="flex gap-2 justify-center mb-12">
               {w.palette.map((c: string) => (
-                <div
+                <span
                   key={c}
-                  className="w-4 h-4 rounded-full"
-                  style={{ backgroundColor: c }}
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: 99,
+                    backgroundColor: c,
+                    boxShadow: `0 0 10px ${c}`,
+                  }}
                 />
               ))}
               <span
-                className="text-xs tracking-widest ml-2 self-center"
-                style={{ color: "rgba(255,255,255,0.2)" }}
+                style={{
+                  fontFamily: "var(--font-sans), Inter, Arial, sans-serif",
+                  fontSize: 9.5,
+                  letterSpacing: "0.26em",
+                  color: "rgba(226,222,255,.4)",
+                  marginLeft: 8,
+                }}
               >
-                {w.form?.toUpperCase()}
+                {String(w.form ?? "").toUpperCase()}
               </span>
             </div>
           </>
         ) : (
-          <p style={{ color: "rgba(255,255,255,0.3)" }}>
+          <p
+            style={{
+              fontFamily: "var(--font-serif), Georgia, serif",
+              fontStyle: "italic",
+              fontSize: 18,
+              color: "rgba(226,222,255,.62)",
+              textShadow: "0 1px 12px rgba(0,0,0,.9)",
+              marginBottom: 44,
+            }}
+          >
             This whisper has faded into the void.
           </p>
         )}
 
         <Link
           href="/"
-          className="inline-block border border-white/20 text-white/50 hover:text-white/80 hover:border-white/40 transition-colors px-8 py-3 rounded-xl text-sm tracking-widest"
+          style={{
+            display: "inline-block",
+            fontFamily: "var(--font-sans), Inter, Arial, sans-serif",
+            fontSize: 11,
+            letterSpacing: "0.22em",
+            color: "rgba(236,232,255,.82)",
+            border: `1px solid ${bright}55`,
+            borderRadius: 999,
+            padding: "13px 30px",
+            textDecoration: "none",
+            background: "rgba(14,10,28,.5)",
+            boxShadow: `0 0 26px ${bright}22`,
+          }}
         >
-          WHISPER YOUR OWN
+          WHISPER YOUR OWN &#10023;
         </Link>
       </div>
     </div>
