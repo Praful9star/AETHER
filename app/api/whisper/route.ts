@@ -61,10 +61,39 @@ function hashString(s: string): number {
   return h;
 }
 
+// One line was returned for every failed call, so when the AI was down each
+// thought came back word-for-word identical while the palette and form kept
+// changing — the galaxy looked alive and the words gave it away. A pool
+// chosen by the same hash keeps a degraded response varied and in voice.
+// This is graceful degradation, not a substitute: a working key still
+// produces a line written for the specific thought.
+const FALLBACK_WHISPERS = [
+  "In the quiet between stars, your thought becomes light.",
+  "Something you carried is now a place in the sky.",
+  "The dark makes room for it, and it stays.",
+  "What you felt has weight here. It holds its own orbit.",
+  "Even unspoken, it was always going somewhere.",
+  "This one burns at its own pace. Let it.",
+  "The cosmos keeps no drafts — only what was meant.",
+  "You gave it a shape by saying it at all.",
+  "Distance is only the space a feeling travels.",
+  "It was already light. You only turned to look.",
+  "Nothing given to the dark is lost in it.",
+  "A small fire, set down where it can be found again.",
+  "You are the only one who could have put this here.",
+  "It does not need to be understood to be kept.",
+  "Somewhere this is still happening, and always will be.",
+  "The sky was incomplete until you said that.",
+  "Heavy things float out here. Set it down.",
+  "This will be easier to look at from a distance.",
+  "What passes through you leaves a shape behind.",
+  "Held long enough, anything starts to shine.",
+];
+
 function buildFallback(thought: string) {
   const h = hashString(thought);
   return {
-    whisper: "In the quiet between stars, your thought becomes light.",
+    whisper: FALLBACK_WHISPERS[h % FALLBACK_WHISPERS.length],
     palette: FALLBACK_PALETTES[h % FALLBACK_PALETTES.length],
     form: FORMS[h % FORMS.length],
     energy: ((h % 100) / 100) * 0.7 + 0.2,
@@ -180,6 +209,19 @@ export async function POST(req: Request) {
       energy: Math.max(0, Math.min(1, Number(json.energy) || 0.5)),
     });
   } catch (err) {
+    // The failure was completely silent: the catch swallowed everything and
+    // returned a fallback, so a dead key, a retired model and malformed JSON
+    // were indistinguishable from outside — and from inside, since nothing
+    // was logged. This one line is what turns "quotes repeat" into a cause
+    // you can read in the runtime logs. The key itself is never logged, only
+    // whether one is present and what the SDK complained about.
+    console.error("[whisper] AI call failed, serving fallback:", {
+      hasKey: Boolean(process.env.GROQ_API_KEY),
+      keyLength: process.env.GROQ_API_KEY?.length ?? 0,
+      status: (err as { status?: number })?.status,
+      name: (err as Error)?.name,
+      message: (err as Error)?.message?.slice(0, 300),
+    });
     // Groq being down/rate-limited/returning malformed JSON must never
     // surface as a raw 500 — this fallback exists specifically so a failed
     // AI call still produces a whisper. (It previously tried to re-read the
