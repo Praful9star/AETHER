@@ -2812,9 +2812,16 @@ export default function AetherCanvas() {
     };
     let currentTarget=forms.spiral;
     // Frame the galaxy the app opens on as well, so the very first view is
-    // composed rather than happening to suit one fixed distance.
+    // composed rather than happening to suit one fixed distance. The live
+    // re-fit is scheduled here too: every morphed galaxy got one, but the
+    // opening galaxy — the first thing anyone sees — was framed from the
+    // target extent alone, which under-measures. It happened to sit inside
+    // the frame at one aspect ratio; that is luck, not the same mechanism.
     fitRadius=measureFit(currentTarget);
     cam.targetRadius=fitRadius;
+    refitAt=performance.now()+2600;
+    nextRefitAt=performance.now()+4600;
+    refitUntil=performance.now()+16000;
     let curFormName: FormType="spiral"; // drives the idle signature motion
     let saverArmed=false;
     let warp=0; // supernova pulse during form transitions
