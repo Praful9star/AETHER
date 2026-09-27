@@ -1091,14 +1091,60 @@ function makeAudio() {
   // impulse response, giving every note a sense of vast cosmic space
   // without needing a sampled IR file.
   const verb=ac.createConvolver();
-  const irLen=Math.floor(ac.sampleRate*3.2);
-  const irBuf=ac.createBuffer(2,irLen,ac.sampleRate);
+  const sr=ac.sampleRate;
+  const irLen=Math.floor(sr*3.2);
+  const irBuf=ac.createBuffer(2,irLen,sr);
+  // The previous impulse was white noise under a power-law decay. That is
+  // the quick version of a reverb, and it has three audible tells: it
+  // begins instantly, so there is no gap between a note and its space; its
+  // reflections are uniformly dense from the first sample, so the room has
+  // no size; and every frequency decays at the same rate, which no real
+  // room does — that last one is why a noise tail sounds bright, fizzy and
+  // slightly metallic.
+  //
+  // Standard hall values, applied here: a pre-delay so the direct sound
+  // stays in front of its own tail, a handful of discrete early
+  // reflections whose timing is what actually tells the ear how big the
+  // space is, and a tail whose high frequencies die faster than its low
+  // ones.
+  const preDelay=Math.floor(sr*0.045);          // 45ms: inside the 20-80ms hall range
+  const erEnd=preDelay+Math.floor(sr*0.09);
+  // Early reflection taps, in ms after the pre-delay. Deliberately
+  // irregular: evenly spaced taps comb-filter, which rings rather than
+  // sounds like a room.
+  const erTaps=[0,7.3,12.9,19.4,27.1,33.8,42.6,51.2,63.7,78.4];
   for (let ch=0;ch<2;ch++) {
     const d=irBuf.getChannelData(ch);
-    for (let i=0;i<irLen;i++) {
-      const decay=Math.pow(1-i/irLen,2.6);
-      d[i]=(Math.random()*2-1)*decay;
+    // A one-pole lowpass whose cutoff falls as the tail ages. Bright at the
+    // onset, dark by the end — frequency-dependent decay, the single thing
+    // that separates a room from a hiss.
+    let lpState=0;
+    const fcStart=9000, fcEnd=700;
+    for (let i=preDelay;i<irLen;i++) {
+      const t=(i-preDelay)/(irLen-preDelay);
+      const fc=fcStart+(fcEnd-fcStart)*Math.pow(t,0.55);
+      const a=1-Math.exp(-2*Math.PI*fc/sr);
+      lpState+=a*((Math.random()*2-1)-lpState);
+      // The diffuse tail builds up rather than arriving at full density.
+      // Started flat, it masked its own early reflections completely — a
+      // measurement caught that, not an ear: the taps were present in the
+      // buffer and indistinguishable from the noise around them. In a real
+      // room the first reflections arrive alone and the dense tail fills in
+      // behind them, and that order is what the ear reads as size.
+      const build=i<erEnd?Math.pow((i-preDelay)/Math.max(1,erEnd-preDelay),1.6):1;
+      d[i]=lpState*Math.pow(1-t,2.6)*(0.12+0.88*build);
     }
+    // Early reflections sit on top of the diffuse tail. Slightly different
+    // timing and gain per channel, which is what gives the space width
+    // without any explicit stereo trickery.
+    erTaps.forEach((ms,k)=>{
+      const jitter=1+(ch===0?-0.04:0.04)*((k%3)-1);
+      const idx=preDelay+Math.floor(sr*(ms/1000)*jitter);
+      if (idx<erEnd&&idx<irLen) {
+        const amp=(0.85/(1+k*0.6))*(ch===0?1:0.92);
+        d[idx]+=(k%2?-1:1)*amp;
+      }
+    });
   }
   verb.buffer=irBuf;
   const verbSend=ac.createGain(); verbSend.gain.value=0.22;
@@ -1260,10 +1306,16 @@ function makeAudio() {
   const VOICE_BASE=130.81;                              // C3
   const VOICE_RATIOS=[1,1.125,1.3333,1.5,1.6875];       // major pentatonic
   const VOICE_LEVEL=0.019;
-  type Voice={osc:OscillatorNode; lvl:GainNode; pan:PannerNode|null};
+  type Voice={osc:OscillatorNode; osc2:OscillatorNode; lvl:GainNode; pan:PannerNode|null};
   const voices:Voice[]=[];
   const makeVoice=(freq:number,x:number,y:number,z:number,idx:number):Voice=>{
     const o=ac.createOscillator(); o.type="sine"; o.frequency.value=freq;
+    // A second oscillator a few cents away. One sine is clean and inert;
+    // a detuned pair beats slowly against itself, which is the oldest trick
+    // there is for making a held note sound alive rather than generated.
+    // The offset differs per voice so the five never beat in step.
+    const o2=ac.createOscillator(); o2.type="sine"; o2.frequency.value=freq;
+    o2.detune.value=5.5+idx*2.4;
     const lvl=ac.createGain(); lvl.gain.value=0;
     // Each voice breathes on its own slow cycle, at a rate that shares no
     // factor with its neighbours, so the chord never settles into a pulse.
@@ -1272,7 +1324,8 @@ function makeAudio() {
     lfo.frequency.value=0.043+idx*0.019;
     const lg=ac.createGain(); lg.gain.value=0.34;
     lfo.connect(lg); lg.connect(trem.gain); lfo.start();
-    o.connect(lvl); lvl.connect(trem);
+    const pairMix=ac.createGain(); pairMix.gain.value=0.5;
+    o.connect(pairMix); o2.connect(pairMix); pairMix.connect(lvl); lvl.connect(trem);
     let pan:PannerNode|null=null;
     if (hasPannerNode) {
       pan=ac.createPanner();
@@ -1287,8 +1340,8 @@ function makeAudio() {
     } else {
       trem.connect(sfxBus);
     }
-    o.start();
-    return {osc:o,lvl,pan};
+    o.start(); o2.start();
+    return {osc:o,osc2:o2,lvl,pan};
   };
   const moveVoice=(v:Voice,x:number,y:number,z:number)=>{
     if (!v.pan) return;
@@ -1473,6 +1526,7 @@ function makeAudio() {
         // Long glides on both pitch and level: the chord should seem to
         // have always been there, never to have been switched on.
         v.osc.frequency.setTargetAtTime(freq,t,1.6);
+        v.osc2.frequency.setTargetAtTime(freq,t,1.6);
         v.lvl.gain.setTargetAtTime(VOICE_LEVEL,t,2.0);
         moveVoice(v,x,y,z);
       }
