@@ -2678,6 +2678,7 @@ export default function AetherCanvas() {
       if (e.touches.length===2) {
         const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
         cam.targetRadius=Math.max(18,Math.min(120,cam.targetRadius-(d-pinchD)*0.25));
+        userZoomAt=performance.now();
         pinchD=d; cam.lastInput=performance.now(); e.preventDefault();
       }
     };
@@ -2691,6 +2692,7 @@ export default function AetherCanvas() {
       if (!e.ctrlKey&&!e.metaKey) return;
       e.preventDefault();
       cam.targetRadius=Math.max(18,Math.min(120,cam.targetRadius+e.deltaY*0.12));
+      userZoomAt=performance.now();
       cam.lastInput=performance.now();
     };
     el.addEventListener("wheel",onWheel,{passive:false});
@@ -2705,7 +2707,58 @@ export default function AetherCanvas() {
     window.addEventListener("deviceorientation",onDeviceOrientation);
 
     let energyCur=0.35,energyTgt=0.35,colorFrames=0,spin=0,burst=0;
+    // Frame whichever galaxy is on screen so it actually fits in the frame.
+    // The camera sat at a fixed distance, which happened to suit the form
+    // it opens on and overflowed others: after releasing a thought the
+    // galaxy ran past all four edges and read as a wall of particles
+    // rather than as a galaxy — the frame right after the main interaction.
+    // Measure the form's real extent and solve for the distance that holds
+    // it, in both axes, at this viewport's shape.
+    //
+    // Horizontal extent uses the radius in XZ because the galaxy spins on
+    // Y: whatever is widest will swing into view eventually, so framing for
+    // the current angle alone would drift out a second later.
+    let fitRadius=38;
+    // A one-shot re-fit shortly after a morph. The target extent is only
+    // where the particles are heading; several forms keep drifting past it
+    // on their idle motion, so four of the thirty-seven still overflowed
+    // when framed from the target alone. Re-solving once from the live
+    // positions, after the motion has settled, fixes every form without
+    // guessing a per-form fudge factor.
+    let refitAt=0, refit2At=0;
+    // If the viewer has reached for the zoom, the framing is theirs.
+    let userZoomAt=0;
+    const measureFit=(target:Float32Array)=>{
+      let rxz=0, hy=0;
+      // Every 7th particle: 40,000 points is far more than needed to find
+      // an extent, and this runs on the main thread during a transition.
+      for (let i=0;i<target.length;i+=21) {
+        const x=target[i], y=target[i+1], z=target[i+2];
+        if (!isFinite(x)||!isFinite(y)||!isFinite(z)) continue;
+        const r=x*x+z*z; if (r>rxz) rxz=r;
+        const ay=Math.abs(y); if (ay>hy) hy=ay;
+      }
+      rxz=Math.sqrt(rxz);
+      const aspect=Math.max(0.35,mount.clientWidth/Math.max(1,mount.clientHeight));
+      const halfFov=(camera.fov*Math.PI/180)/2;
+      const tan=Math.tan(halfFov);
+      // Distance needed for the vertical extent, and for the horizontal one
+      // once the aspect ratio is taken into account. The larger wins.
+      const dV=hy/Math.max(0.0001,tan);
+      const dH=rxz/Math.max(0.0001,tan*aspect);
+      // Margin so the form sits inside the frame rather than touching it,
+      // and clamped to the same range the wheel and pinch already allow.
+      // Headroom for the fact that the form is not static: it breathes on
+      // the idle amplitude and swells during a transition, so a distance
+      // solved for the resting extent alone still clips at the edges.
+      const portraitPad=aspect<1?1.08:1;
+      return Math.max(18,Math.min(120,Math.max(dV,dH)*1.32*portraitPad+8));
+    };
     let currentTarget=forms.spiral;
+    // Frame the galaxy the app opens on as well, so the very first view is
+    // composed rather than happening to suit one fixed distance.
+    fitRadius=measureFit(currentTarget);
+    cam.targetRadius=fitRadius;
     let curFormName: FormType="spiral"; // drives the idle signature motion
     let saverArmed=false;
     let warp=0; // supernova pulse during form transitions
@@ -2807,10 +2860,14 @@ export default function AetherCanvas() {
           // Stage 1: every particle flies into the word; stage 2 detonates into the galaxy
           currentTarget=textTarget; spellUntil=performance.now()+2600; pendingForm=forms[f]; warp=0.3;
           points.rotation.y=Math.PI/2-cam.theta; // face the viewer immediately
+          fitRadius=measureFit(forms[f]);
         } else {
           currentTarget=forms[f]; pendingForm=null; warp=1;
+          fitRadius=measureFit(forms[f]);
           audioRef.current?.duck?.();
         }
+        // Sky mode owns the camera while it is on; don't fight it.
+        if (!skyModeOn) { cam.targetRadius=fitRadius; refitAt=performance.now()+2600; refit2At=performance.now()+7000; }
       },
       rebuildStars(arr:SavedStar[]) {
         const n=Math.min(arr.length,CAP);
@@ -3046,6 +3103,14 @@ export default function AetherCanvas() {
       camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h);
       composer.setSize(w,h);
       memLineMat.resolution.set(w,h);
+      // The fit distance was solved for the old viewport shape. Resizing a
+      // window, rotating a phone or plugging in a projector changes the
+      // aspect, so re-solve it — otherwise a galaxy framed on a laptop
+      // overflows the moment it goes on a different screen.
+      if (!skyModeOn&&currentTarget) {
+        fitRadius=measureFit(currentTarget);
+        cam.targetRadius=fitRadius;
+      }
     };
     window.addEventListener("resize",onResize);
 
@@ -3111,6 +3176,24 @@ export default function AetherCanvas() {
       if (burstRef.current>0) { burst=Math.max(burst,burstRef.current); burstRef.current=0; }
       burst=Math.max(0,burst-1.2*dt);
 
+      // One-shot re-fit from the live particle positions once the morph has
+      // settled — the target extent alone left several forms clipping the
+      // frame. Skipped entirely if the viewer has touched the zoom since
+      // the morph, because then the framing is their decision, not ours.
+      const firstRefit=refitAt>0&&now>refitAt;
+      const lateRefit=refit2At>0&&now>refit2At;
+      if (firstRefit||lateRefit) {
+        if (firstRefit) refitAt=0; else refit2At=0;
+        if (!skyModeOn&&userZoomAt<now-2600) {
+          const r=measureFit(posArr);
+          // The first pass is authoritative and may pull in as well as out.
+          // The later one only ever widens: it exists for forms that keep
+          // drifting outward, and pulling the camera back in seven seconds
+          // after the transition would read as fidgeting.
+          const next=firstRefit?r:Math.max(cam.targetRadius,r);
+          if (Math.abs(next-cam.targetRadius)>0.5) { fitRadius=next; cam.targetRadius=next; }
+        }
+      }
       cam.radius+=(cam.targetRadius-cam.radius)*(1-Math.exp(-2.8*dt));
       // Screensaver: faster auto-rotate. Sky mode: slower, contemplative drift.
       const rotSpeed=skyModeOn?0.014:(saverArmed?0.18:0.04);
@@ -4055,6 +4138,11 @@ export default function AetherCanvas() {
     if (audioRef.current) audioRef.current.transition(fm,0.55);
     showMorphLabel(fm);
     lastActRef.current=performance.now();
+    // The explorer is min(300px, 82vw): a side panel on a laptop, worth
+    // leaving open to browse through the forms, but 77% of a phone screen.
+    // There, picking a galaxy left it covering almost everything and you
+    // never saw the thing you just chose. Close it where it occludes.
+    if (typeof window!=="undefined"&&window.innerWidth<560) setExplore(false);
   },[showMorphLabel]);
 
   // Ambient tour — while the screensaver runs, drift through random galaxies
