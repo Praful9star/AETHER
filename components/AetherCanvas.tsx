@@ -1749,6 +1749,18 @@ export default function AetherCanvas() {
   const [captureURL,   setCaptureURL]   = useState<string|null>(null);
   const [list,         setList]         = useState<SavedStar[]>([]);
   const [inputFocused, setInputFocused] = useState(false);
+  // The composer sits between the mic and RELEASE, so on a phone it gets
+  // about 126px of text width. The full placeholder wrapped to three lines
+  // inside a one-line box and was cut mid-word ("whisper a thought to
+  // the"). Nothing about that reads as finished, and it is the first
+  // control anyone touches.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const check = () => setNarrow(window.innerWidth < 560);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
   const [morphLabel,   setMorphLabel]   = useState<{label:string;id:number}|null>(null);
   const [screensaver,  setScreensaver]  = useState(false);
   const [voiceActive,  setVoiceActive]  = useState(false);
@@ -4387,8 +4399,8 @@ export default function AetherCanvas() {
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask();}}}
             onFocus={()=>setInputFocused(true)}
             onBlur={()=>setInputFocused(false)}
-            placeholder="whisper a thought to the cosmos…"
-            style={{flex:1,background:"rgba(14,10,28,.65)",backdropFilter:"blur(14px)",border:`1px solid ${inputFocused?a66:"rgba(150,130,230,.26)"}`,borderRadius:999,color:"#eee9ff",fontSize:15,padding:"13px 22px",fontFamily:"inherit",resize:"none",outline:"none",lineHeight:1.4,boxShadow:inputFocused?`0 0 24px ${a44}, inset 0 0 12px rgba(0,0,0,.3)`:"none",transition:"border-color 0.4s ease, box-shadow 0.4s ease"}}
+            placeholder={narrow?"whisper a thought…":"whisper a thought to the cosmos…"}
+            style={{flex:1,background:"rgba(14,10,28,.65)",backdropFilter:"blur(14px)",border:`1px solid ${inputFocused?a66:"rgba(150,130,230,.26)"}`,borderRadius:999,color:"#eee9ff",fontSize:narrow?13.5:15,padding:narrow?"13px 14px":"13px 22px",fontFamily:"inherit",resize:"none",outline:"none",lineHeight:1.4,boxShadow:inputFocused?`0 0 24px ${a44}, inset 0 0 12px rgba(0,0,0,.3)`:"none",transition:"border-color 0.4s ease, box-shadow 0.4s ease"}}
           />
           <button
             onClick={ask}
