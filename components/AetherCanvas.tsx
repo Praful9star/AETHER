@@ -1053,9 +1053,20 @@ function makeAudio() {
   // for natural chorus beating (real analog pads are never a single pure
   // tone), each with its own slow independent stereo-pan LFO so the whole
   // bed breathes across the field instead of sitting dead-center.
-  [55,82.4,110].forEach((f,vi) => {
+  // The drone is held as ratios to a root rather than fixed pitches, so the
+  // whole bed can be retuned when the galaxy changes. It used to be
+  // hardcoded to A (55 / 82.4 / 110) for all thirty-seven forms, while the
+  // sequencer picked a different key per form — so the melody modulated and
+  // its own foundation never moved, and in several keys the two were simply
+  // fighting. The structure is kept: root an octave down, a fourth below,
+  // and the root.
+  const droneOscs: {osc:OscillatorNode; ratio:number}[]=[];
+  const DRONE_RATIOS=[0.5, Math.pow(2,-5/12), 1];
+  DRONE_RATIOS.forEach((ratio,vi) => {
+    const f=110*ratio;
     [{cents:0,type:"sine" as OscillatorType,vol:0.10},{cents:-6,type:"triangle" as OscillatorType,vol:0.042},{cents:7,type:"triangle" as OscillatorType,vol:0.038}].forEach((voice,ci) => {
       const o=ac.createOscillator(); o.type=voice.type; o.frequency.value=f; o.detune.value=voice.cents;
+      droneOscs.push({osc:o,ratio});
       const g=ac.createGain(); g.gain.value=voice.vol;
       let node: AudioNode=g;
       if (hasPanner) {
@@ -1069,12 +1080,38 @@ function makeAudio() {
     });
   });
 
+  // Slides the whole bed to a new key. Glided rather than stepped: a
+  // galaxy morph already takes a couple of seconds, and a harmonic slide
+  // underneath it reads as the same event rather than a second one.
+  // Folded to whichever octave puts the bed nearest its original register,
+  // so changing key never turns the foundation into a lead.
+  const shimmerOscs: {osc:OscillatorNode; ratio:number}[]=[];
+  const retuneDrone=(root:number, when:number, glide=1.4)=>{
+    let top=root;
+    while (top>155.6) top/=2;
+    while (top<77.8) top*=2;
+    droneOscs.forEach(({osc,ratio})=>{
+      osc.frequency.setTargetAtTime(top*ratio,when,glide);
+    });
+    // The shimmer rides the same root, two octaves and a fifth above, so
+    // the sparkle stays inside the chord instead of beside it.
+    shimmerOscs.forEach(({osc,ratio})=>{
+      osc.frequency.setTargetAtTime(top*ratio,when,glide);
+    });
+  };
+
   // Starlight shimmer — a very quiet high detuned pair with slow
   // independent tremolo, the kind of faint high-end sparkle that reads
   // as "cinematic space" without ever drawing attention to itself.
+  // The shimmer had the same problem as the drone one octave up: hardcoded
+  // to A6 and E7, so once the bed started following the galaxy's key this
+  // pair would have been the only thing left sitting in A. Held as ratios
+  // for the same reason.
   const shimmerGain=ac.createGain(); shimmerGain.gain.value=0.6;
-  [1760,2637].forEach((f,i) => {
+  [16,24].forEach((ratio,i) => {
+    const f=110*ratio;
     const o=ac.createOscillator(); o.type="sine"; o.frequency.value=f; o.detune.value=i===0?-5:5;
+    shimmerOscs.push({osc:o,ratio});
     const g=ac.createGain(); g.gain.value=0.014;
     const trem=ac.createOscillator(); trem.type="sine"; trem.frequency.value=0.07+i*0.03;
     const tremGain=ac.createGain(); tremGain.gain.value=0.010;
@@ -1545,6 +1582,9 @@ function makeAudio() {
       let hash=0; for (let i=0;i<form.length;i++) hash=(hash*31+form.charCodeAt(i))>>>0;
       const root=110*Math.pow(2,(hash%12)/12);
       currentScale=[0,3,5,7,10,12,15].map(iv=>root*Math.pow(2,iv/12));
+      // The bed follows the same root, so the pad and the melody are in the
+      // same key instead of two keys at once.
+      retuneDrone(root,t);
 
       const LP: Record<FormType,number> = {
         spiral:400+energy*900, barred:270, elliptical:120, ring:1900,
