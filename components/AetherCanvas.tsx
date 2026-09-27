@@ -2689,7 +2689,7 @@ export default function AetherCanvas() {
     const onTM=(e:TouchEvent)=>{
       if (e.touches.length===2) {
         const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-        cam.targetRadius=Math.max(18,Math.min(120,cam.targetRadius-(d-pinchD)*0.25));
+        cam.targetRadius=Math.max(18,Math.min(zoomMax(),cam.targetRadius-(d-pinchD)*0.25));
         userZoomAt=performance.now();
         pinchD=d; cam.lastInput=performance.now(); e.preventDefault();
       }
@@ -2703,7 +2703,7 @@ export default function AetherCanvas() {
     const onWheel=(e:WheelEvent)=>{
       if (!e.ctrlKey&&!e.metaKey) return;
       e.preventDefault();
-      cam.targetRadius=Math.max(18,Math.min(120,cam.targetRadius+e.deltaY*0.12));
+      cam.targetRadius=Math.max(18,Math.min(zoomMax(),cam.targetRadius+e.deltaY*0.12));
       userZoomAt=performance.now();
       cam.lastInput=performance.now();
     };
@@ -2731,40 +2731,84 @@ export default function AetherCanvas() {
     // Y: whatever is widest will swing into view eventually, so framing for
     // the current angle alone would drift out a second later.
     let fitRadius=38;
+    // How far the viewer may pull back by hand. Normally 120, but if the
+    // automatic fit had to go further to hold the form on this screen, the
+    // manual range has to follow — otherwise the first scroll would snap
+    // the camera from 237 straight to 120 and the galaxy would jump.
+    const zoomMax=()=>Math.max(120,fitRadius*1.35);
     // A one-shot re-fit shortly after a morph. The target extent is only
     // where the particles are heading; several forms keep drifting past it
     // on their idle motion, so four of the thirty-seven still overflowed
     // when framed from the target alone. Re-solving once from the live
     // positions, after the motion has settled, fixes every form without
     // guessing a per-form fudge factor.
-    let refitAt=0, refit2At=0;
+    // One re-fit once the morph settles. An earlier version re-checked on a
+    // repeating cadence, widening only, on the theory that some forms keep
+    // drifting outward. That theory was wrong — the real cause of the
+    // overflow was the distance ceiling — and the repeating pass made
+    // things worse: sampling the idle breathing again and again, and only
+    // ever widening, ratchets the camera out to the largest transient and
+    // leaves every galaxy small.
+    let refitAt=0;
+    // A bounded widen-only re-check after the first one. Some forms keep
+    // growing for several seconds after the morph, and a single settle-time
+    // sample catches them mid-way. Widen-only, and time-boxed, so it cannot
+    // wander once the form is steady.
+    let nextRefitAt=0, refitUntil=0;
     // If the viewer has reached for the zoom, the framing is theirs.
     let userZoomAt=0;
+    const fitRs:number[]=[], fitYs:number[]=[];
     const measureFit=(target:Float32Array)=>{
-      let rxz=0, hy=0;
+      // A high percentile, not the maximum. The maximum is one particle:
+      // on the live buffer a handful of them ride the idle breathing out
+      // past the body of the galaxy, and framing for those put the camera
+      // far enough back to make every galaxy small. The 99.5th percentile
+      // describes where the form actually ends, and a few stragglers
+      // crossing the edge is what the margin is for.
+      fitRs.length=0; fitYs.length=0;
       // Every 7th particle: 40,000 points is far more than needed to find
       // an extent, and this runs on the main thread during a transition.
       for (let i=0;i<target.length;i+=21) {
         const x=target[i], y=target[i+1], z=target[i+2];
         if (!isFinite(x)||!isFinite(y)||!isFinite(z)) continue;
-        const r=x*x+z*z; if (r>rxz) rxz=r;
-        const ay=Math.abs(y); if (ay>hy) hy=ay;
+        fitRs.push(x*x+z*z); fitYs.push(Math.abs(y));
       }
+      if (!fitRs.length) return fitRadius;
+      // The true maximum. A percentile was tried here to resist particles
+      // riding the idle breathing past the body, but it under-measures any
+      // form whose structure genuinely lives at the rim — an Einstein ring
+      // is mostly rim — and put the camera inside it. The breathing is what
+      // the margin and the settle-time re-fit are for.
+      let rxz=0, hy=0;
+      for (const v of fitRs) if (v>rxz) rxz=v;
+      for (const v of fitYs) if (v>hy) hy=v;
       rxz=Math.sqrt(rxz);
       const aspect=Math.max(0.35,mount.clientWidth/Math.max(1,mount.clientHeight));
       const halfFov=(camera.fov*Math.PI/180)/2;
       const tan=Math.tan(halfFov);
+      // On a tall screen, fitting a galaxy's full width means standing so
+      // far back that it becomes a small distant disc — technically framed,
+      // visibly worse. A galaxy is mostly empty at its rim, so let the
+      // faint outer arms run past the sides and frame the body instead.
+      // Landscape is unaffected: there, width is never the binding axis.
+      const fillPortrait=aspect<1?0.72:1;
+      const portraitPad=aspect<1?1.08:1;
       // Distance needed for the vertical extent, and for the horizontal one
       // once the aspect ratio is taken into account. The larger wins.
       const dV=hy/Math.max(0.0001,tan);
-      const dH=rxz/Math.max(0.0001,tan*aspect);
+      const dH=rxz*fillPortrait/Math.max(0.0001,tan*aspect);
       // Margin so the form sits inside the frame rather than touching it,
       // and clamped to the same range the wheel and pinch already allow.
       // Headroom for the fact that the form is not static: it breathes on
       // the idle amplitude and swells during a transition, so a distance
       // solved for the resting extent alone still clips at the edges.
-      const portraitPad=aspect<1?1.08:1;
-      return Math.max(18,Math.min(120,Math.max(dV,dH)*1.32*portraitPad+8));
+      // Ceiling of 260, not the 120 the wheel and pinch use. That 120 was
+      // inherited from the manual zoom range and was the real reason two
+      // forms still overflowed on a phone: a wide form on a 0.46 aspect
+      // needs 205-240 units of distance to fit across, and the fit was
+      // being silently clamped to 120 — so no amount of re-measuring could
+      // ever have helped. Far plane is 600, so there is room.
+      return Math.max(18,Math.min(260,Math.max(dV,dH)*1.32*portraitPad+8));
     };
     let currentTarget=forms.spiral;
     // Frame the galaxy the app opens on as well, so the very first view is
@@ -2879,7 +2923,11 @@ export default function AetherCanvas() {
           audioRef.current?.duck?.();
         }
         // Sky mode owns the camera while it is on; don't fight it.
-        if (!skyModeOn) { cam.targetRadius=fitRadius; refitAt=performance.now()+2600; refit2At=performance.now()+7000; }
+        if (!skyModeOn) {
+          cam.targetRadius=fitRadius;
+          refitAt=performance.now()+2600;
+          nextRefitAt=performance.now()+4600; refitUntil=performance.now()+16000;
+        }
       },
       rebuildStars(arr:SavedStar[]) {
         const n=Math.min(arr.length,CAP);
@@ -3193,15 +3241,15 @@ export default function AetherCanvas() {
       // frame. Skipped entirely if the viewer has touched the zoom since
       // the morph, because then the framing is their decision, not ours.
       const firstRefit=refitAt>0&&now>refitAt;
-      const lateRefit=refit2At>0&&now>refit2At;
+      const lateRefit=nextRefitAt>0&&now>nextRefitAt&&now<refitUntil;
       if (firstRefit||lateRefit) {
-        if (firstRefit) refitAt=0; else refit2At=0;
+        if (firstRefit) refitAt=0;
+        if (lateRefit) nextRefitAt=now+2500;
+        // Skipped if the viewer has touched the zoom since the morph: then
+        // the framing is their decision, not ours.
         if (!skyModeOn&&userZoomAt<now-2600) {
           const r=measureFit(posArr);
-          // The first pass is authoritative and may pull in as well as out.
-          // The later one only ever widens: it exists for forms that keep
-          // drifting outward, and pulling the camera back in seven seconds
-          // after the transition would read as fidgeting.
+          // First pass is authoritative; the later ones only widen.
           const next=firstRefit?r:Math.max(cam.targetRadius,r);
           if (Math.abs(next-cam.targetRadius)>0.5) { fitRadius=next; cam.targetRadius=next; }
         }
