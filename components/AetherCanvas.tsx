@@ -2635,6 +2635,18 @@ export default function AetherCanvas() {
     const listenFwd=new THREE.Vector3(), listenUp=new THREE.Vector3();
     // Which stars currently hold a sustained voice, and the star count the
     // choice was made from — recomputed only when the sky itself changes.
+    // Scratch for the per-frame star ranking. This path runs every frame in
+    // sky mode over every star, and it used to allocate two Vector3 clones
+    // and two object literals per star plus three arrays — about 29,000
+    // allocations a second at capacity and 60fps. None of it escapes the
+    // frame, so it is all pooled: the objects are reused and only the
+    // reused array's length changes.
+    type RankEntry={s:SavedStar; idx:number; wx:number; wy:number; wz:number; d:number};
+    const rankPool:RankEntry[]=Array.from({length:CAP},()=>
+      ({s:null as unknown as SavedStar,idx:-1,wx:0,wy:0,wz:0,d:0}));
+    const screenPool=Array.from({length:CAP},()=>({x:0,y:0,z:0}));
+    const ranked:RankEntry[]=[];
+    const rankV=new THREE.Vector3();
     let voiceIdx:number[]=[]; let voiceBase:number[]=[]; let voiceFrom=-1; let voiceT=0;
     const voiceVec=new THREE.Vector3();
     // Ambient cursor parallax — the cosmos leans gently toward the pointer
@@ -3617,13 +3629,22 @@ export default function AetherCanvas() {
           // Each placed label carries its own half-width: the collision
           // test compares real footprints rather than assuming one size.
           const placed: {x:number;y:number;half:number}[]=[];
-          const tmpV=new THREE.Vector3();
           const selId=selectedIdRef.current;
           let lockedOn=false;
-          const ranked=starsRef.current.map((s,idx)=>{
-            tmpV.set(s.pos[0],s.pos[1],s.pos[2]).applyMatrix4(memPoints.matrixWorld);
-            return {s,idx,wpos:tmpV.clone(),d:tmpV.distanceTo(camera.position)};
-          }).sort((a,b)=>a.d-b.d);
+          // Fill the pooled entries, then sort the reused array. Setting
+          // length to 0 and pushing back keeps the backing store, so this
+          // is a sort of existing objects rather than a fresh allocation.
+          ranked.length=0;
+          const starList=starsRef.current;
+          for (let i=0;i<starList.length&&i<CAP;i++) {
+            const e=rankPool[i];
+            e.s=starList[i]; e.idx=i;
+            rankV.set(e.s.pos[0],e.s.pos[1],e.s.pos[2]).applyMatrix4(memPoints.matrixWorld);
+            e.wx=rankV.x; e.wy=rankV.y; e.wz=rankV.z;
+            e.d=rankV.distanceTo(camera.position);
+            ranked.push(e);
+          }
+          ranked.sort((a,b)=>a.d-b.d);
 
           // Which star is the cursor closest to? Projected first so the
           // test is in screen space, which is what the hand actually aims
@@ -3631,10 +3652,13 @@ export default function AetherCanvas() {
           const mouse=mouseRef.current;
           const mx=(mouse.x*0.5+0.5)*w, my=(-mouse.y*0.5+0.5)*h;
           let hoverIdx=-1, hoverBest=HOVER_RADIUS;
-          const screenPos=ranked.map(({wpos})=>{
-            const p=wpos.clone().project(camera);
-            return {x:(p.x*0.5+0.5)*w,y:(-p.y*0.5+0.5)*h,z:p.z};
-          });
+          const screenPos=screenPool;
+          for (let k=0;k<ranked.length;k++) {
+            const e=ranked[k];
+            rankV.set(e.wx,e.wy,e.wz).project(camera);
+            const sp=screenPool[k];
+            sp.x=(rankV.x*0.5+0.5)*w; sp.y=(-rankV.y*0.5+0.5)*h; sp.z=rankV.z;
+          }
           if (mouse.active) {
             ranked.forEach(({idx},k)=>{
               const sp=screenPos[k];
