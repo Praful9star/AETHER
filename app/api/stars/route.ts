@@ -1,24 +1,25 @@
-import { createClient } from "@supabase/supabase-js";
+import { isRealUserId, whispersDb } from "@/lib/supabase";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get("user_id");
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseKey) {
-    return Response.json([]);
-  }
+  const db = whispersDb();
+  if (!db) return Response.json([]);
 
   // No bulk "public feed" — a whisper is private to whoever wrote it unless
   // shared explicitly (via its own /w/[id] link, fetched by id elsewhere).
   // Without a user_id this must return nothing rather than let anyone
   // enumerate other people's whispers.
-  if (!userId) return Response.json([]);
+  //
+  // And 'anon' is not a user_id. It is the placeholder /api/save writes when
+  // it is given none, so every row we have ever stored carries it: asking for
+  // it here used to return a page of strangers' thoughts. Rejected until rows
+  // carry a real owner.
+  if (!isRealUserId(userId)) return Response.json([]);
 
   try {
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = db.client;
     const { data, error } = await supabase
       .from("whispers")
       .select("id,thought,whisper,palette,form,energy,pos,created_at")

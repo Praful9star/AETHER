@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { createClient } from "@supabase/supabase-js";
+import { whispersDb } from "@/lib/supabase";
 
 export const runtime = "edge";
 
@@ -11,12 +11,9 @@ export async function GET(req: Request) {
   let palette = ["#0d0221", "#4c1d95", "#a78bfa"];
   let form = "spiral";
 
-  if (id) {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""
-    );
-    const { data } = await supabase
+  const db = id ? whispersDb() : null;
+  if (id && db) {
+    const { data } = await db.client
       .from("whispers")
       .select("whisper,palette,form")
       .eq("id", id)

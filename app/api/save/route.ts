@@ -1,5 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
+import { whispersDb } from "@/lib/supabase";
 
 // Same 34-form taxonomy as app/api/whisper/route.ts. Duplicated rather than
 // imported (matching that file's own convention) since this route needs it
@@ -17,10 +17,8 @@ const HEX = /^#[0-9a-fA-F]{3,8}$/;
 const DEFAULT_PALETTE = ["#050318", "#2d1b69", "#b892ff"];
 
 export async function POST(req: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseKey) {
+  const db = whispersDb();
+  if (!db) {
     return Response.json({ ok: false, reason: "no-supabase" });
   }
 
@@ -28,7 +26,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { thought, whisper, palette, form, energy, user_id, pos } = body;
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = db.client;
 
     // This is an unauthenticated public endpoint — the normal caller is our
     // own UI sending well-formed AI-generated data, but nothing stops a

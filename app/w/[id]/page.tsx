@@ -1,25 +1,27 @@
 import { Metadata } from "next";
-import { createClient } from "@supabase/supabase-js";
+import { cache } from "react";
 import Link from "next/link";
 import ShareGalaxy from "@/components/ShareGalaxy";
+import { whispersDb } from "@/lib/supabase";
 
 interface Props {
   params: { id: string };
 }
 
-async function getWhisper(id: string) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
+// generateMetadata and the page itself both need the whisper, and both run
+// for the same request — without this that is two round-trips to the database
+// for every share link anyone opens.
+const getWhisper = cache(async (id: string) => {
+  const db = whispersDb();
+  if (!db) return null;
 
-  const supabase = createClient(url, key);
-  const { data } = await supabase
+  const { data } = await db.client
     .from("whispers")
     .select("*")
     .eq("id", id)
     .single();
   return data;
-}
+});
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const w = await getWhisper(params.id);
