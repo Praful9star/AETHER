@@ -1825,6 +1825,10 @@ export default function AetherCanvas() {
   const burstRef     = useRef(0);
   const lastEnergy   = useRef(0.35);
   const starsRef     = useRef<SavedStar[]>([]);
+  // The complete history. starsRef holds only the most recent CAP because
+  // the renderer's buffers are that size; this one is never truncated, and
+  // it is what gets written to storage.
+  const archiveRef   = useRef<SavedStar[]>([]);
   const morphCounter = useRef(0);
   const mouseRef     = useRef({ x: 0, y: 0, active: false });
   const lastActRef   = useRef(performance.now());
@@ -4046,11 +4050,20 @@ export default function AetherCanvas() {
   },[]);
 
   const remember=useCallback((s:SavedStar)=>{
-    starsRef.current=[...starsRef.current,s].slice(-CAP);
+    // Everything is kept. The renderer works on a fixed CAP-sized buffer, so
+    // only the most recent CAP are drawn — but the stored history is the
+    // full list. Previously the capped array was written straight back to
+    // localStorage, so composing your 121st thought silently destroyed your
+    // first one, permanently, with no warning and no copy anywhere else.
+    // For an app whose whole promise is "kept, always, in your sky", losing
+    // the earliest memory is the one failure it cannot have.
+    const all=[...archiveRef.current,s];
+    archiveRef.current=all;
+    starsRef.current=all.slice(-CAP);
     sceneRef.current.rebuildStars?.(starsRef.current);
     setList([...starsRef.current].reverse());
     setCount(starsRef.current.length);
-    try { localStorage.setItem("aether_stars",JSON.stringify(starsRef.current)); } catch {}
+    try { localStorage.setItem("aether_stars",JSON.stringify(all)); } catch {}
     bumpStreak();
     // A thought becoming a permanent star is the whole premise of this app,
     // but until now the only sign it happened was a number ticking up in
@@ -4089,6 +4102,7 @@ export default function AetherCanvas() {
       if (raw) {
         const arr=JSON.parse(raw) as SavedStar[];
         if (Array.isArray(arr)&&arr.length) {
+          archiveRef.current=arr;
           starsRef.current=arr.slice(-CAP);
           setList([...starsRef.current].reverse());
           setCount(starsRef.current.length);
