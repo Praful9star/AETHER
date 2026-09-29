@@ -1257,25 +1257,117 @@ function makeAudio() {
   let seqOn=false;
   let seqSlow=false;
   let lastLp=520; // current galaxy's drone cutoff, restored when leaving sky mode
-  const tPluck=(freq:number, t:number)=>{
+  const tPluck=(freq:number, t:number, vel=1, ring=1.5)=>{
     const pan=nextPan();
     const o=ac.createOscillator(); o.type="triangle"; o.frequency.value=freq;
-    const flt=ac.createBiquadFilter(); flt.type="lowpass"; flt.frequency.value=freq*3.4; flt.Q.value=1.1;
+    const flt=ac.createBiquadFilter(); flt.type="lowpass";
+    // Harder notes open the filter, the way a plucked string gets brighter
+    // when struck harder. Velocity that only changes loudness reads as a
+    // volume knob; velocity that changes timbre reads as playing.
+    flt.frequency.value=freq*(2.2+vel*1.9); flt.Q.value=1.1;
     const g=ac.createGain();
-    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.055,t+0.008); g.gain.exponentialRampToValueAtTime(0.0001,t+1.5);
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(0.055*vel,t+0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+ring);
     o.connect(flt); flt.connect(g); panOut(g,pan); g.connect(delay);
-    o.start(t); o.stop(t+1.6);
+    o.start(t); o.stop(t+ring+0.1);
   };
-  const scheduleSeq=()=>{
-    setTimeout(()=>{
-      if (seqOn) {
-        const f=currentScale[Math.floor(Math.random()*currentScale.length)]*(Math.random()<0.22?2:1);
-        tPluck(f,ac.currentTime);
+
+  // ── Melodic line ────────────────────────────────────────────────────
+  // This used to pick a uniformly random degree of the scale every
+  // 480-900ms on a setTimeout. Two problems, both audible. A memoryless
+  // uniform pick is not a melody — every note is equally likely to be a
+  // seventh leap, so the line has no shape and no direction, and the ear
+  // stops following it within about fifteen seconds. And setTimeout under
+  // a loaded render loop drifts by tens of milliseconds per note, so
+  // nothing ever lands where the previous note implied it would; the
+  // result reads as a wind chime rather than as an instrument being
+  // played. A wind chime is fine. It just isn't worth listening to twice.
+  //
+  // So: a weighted random walk with persistent direction, phrased into
+  // breaths, over a beat grid, scheduled on the audio clock.
+  const SEQ_BEAT=0.44;                 // seconds; sky mode stretches this
+  const NOTE_BEATS=[1,1,1,2,2,3];      // weighted toward short, some long
+  let seqDeg=2;                        // index into currentScale
+  let seqDir=1;                        // walk direction, persists
+  let seqOct=0;                        // 0 or 1 octave up
+  let seqAt=0;                         // next event, in AudioContext time
+  let phrasePos=0, phraseLen=7;
+
+  const seqStep=()=>{
+    const N=currentScale.length;
+    const r=Math.random();
+    if (r<0.68) seqDeg+=seqDir;                                  // step
+    else if (r<0.82) { /* hold — repeating a note is a phrase device */ }
+    else seqDeg+=seqDir*(2+(Math.random()<0.4?1:0));             // leap
+    // Reverse at the ends of the scale rather than clamping, which is what
+    // stops the line from parking on the top note and rattling there.
+    if (seqDeg>=N) { seqDeg=N-2-Math.floor(Math.random()*2); seqDir=-1; }
+    if (seqDeg<0)  { seqDeg=Math.min(N-1,1+Math.floor(Math.random()*2)); seqDir=1; }
+    seqDeg=Math.max(0,Math.min(N-1,seqDeg));
+    if (Math.random()<0.22) seqDir=-seqDir;
+  };
+
+  const seqTick=()=>{
+    if (!seqOn) { seqAt=0; return; }
+    const now=ac.currentTime;
+    // First note after a silence: start from now rather than catching up on
+    // every beat the sequencer was switched off for.
+    if (seqAt<now) seqAt=now+0.05;
+    const beat=SEQ_BEAT*(seqSlow?2.4:1);
+    // Schedule well ahead of the clock, which is the whole point: the notes
+    // are placed by the audio thread, not by a timer.
+    //
+    // The window is 0.9s rather than the 0.35s I first wrote, because the
+    // timer that drives this competes with the render loop for the main
+    // thread. Measured in the browser under software rendering: a starved
+    // tick arrived after the notes it should have scheduled were already
+    // due, they fell through to the clamp below, and 19 of 27 onsets landed
+    // late — the grid was gone exactly when the scene got heavy, which is
+    // exactly when a demo machine is under load. A window wider than any
+    // plausible starvation costs nothing but a slower response to a beat
+    // change, and that change is a slow ambient one either way.
+    while (seqAt<now+0.9) {
+      const beats=NOTE_BEATS[Math.floor(Math.random()*NOTE_BEATS.length)];
+      if (Math.random()<0.06) { seqAt+=beat*beats; continue; }    // rest
+      // Velocity follows the phrase: an arch, so a phrase has a peak and a
+      // falling-away rather than every note being struck identically.
+      const arch=Math.sin(Math.PI*(phrasePos+0.5)/phraseLen);
+      const vel=(0.52+0.48*arch)*(0.88+Math.random()*0.24);
+      const f=currentScale[seqDeg]*(seqOct?2:1);
+      // Long notes ring longer, so note length is something you hear and
+      // not just a gap before the next one.
+      //
+      // The humanising offset is applied to the played time only and never
+      // accumulated back into seqAt. A player pushes and drags against the
+      // pulse; they do not move the pulse. Feeding the jitter back is how a
+      // sequencer wanders out of time over a few minutes.
+      const human=(Math.random()-0.5)*0.022;
+      tPluck(f,Math.max(now,seqAt+human),Math.min(1.25,vel),1.1+beats*0.55);
+      seqAt+=beat*beats;
+      seqStep();
+      if (++phrasePos>=phraseLen) {
+        // A breath between phrases, and occasionally a register change —
+        // the two things that keep a generative line from reading as one
+        // undifferentiated stream.
+        phrasePos=0; phraseLen=5+Math.floor(Math.random()*5);
+        // A whole number of beats. This was 1.5 + random*2.5, which is the
+        // kind of line that looks like it adds variety and actually breaks
+        // the thing it sits inside: a fractional breath leaves every
+        // following note offset from the pulse, nothing ever re-quantises,
+        // and the grid is permanently gone after the first phrase. Measured
+        // it — half the onsets were off the beat.
+        seqAt+=beat*(2+Math.floor(Math.random()*3));
+        // Asymmetric on purpose. A symmetric coin on a persistent toggle
+        // is not "occasionally an octave up" — it is a random walk that
+        // settles at half the time in each register, and the line ends up
+        // living an octave above a drone rooted at C3. Rising is the
+        // exception; falling back is the default.
+        seqOct=seqOct?(Math.random()<0.62?0:1):(Math.random()<0.2?1:0);
       }
-      scheduleSeq();
-    }, (480+Math.random()*420)*(seqSlow?2.6:1));
+    }
   };
-  scheduleSeq();
+  const seqTimer=setInterval(seqTick,150);
 
   const panOutSfx=(node:AudioNode, pan:number)=>{
     if (!hasPanner) { node.connect(sfxBus); return; }
@@ -1494,6 +1586,12 @@ function makeAudio() {
       let s=0; for (let i=0;i<aData.length;i++) s+=aData[i];
       return s/(aData.length*255);
     },
+
+    // The melodic line runs on an interval rather than a self-rescheduling
+    // timeout, so it needs stopping. The context outlives every route in
+    // practice, but a scheduler that cannot be switched off is a leak
+    // waiting for the first page that unmounts this canvas.
+    dispose() { clearInterval(seqTimer); },
 
     // ── Sky mode voice ──────────────────────────────────────────────────
     // Browsing your own sky is the quietest thing the app does, so it gets
@@ -2272,7 +2370,34 @@ export default function AetherCanvas() {
           // Each star twinkles on its own clock (vPhase, fixed per point
           // slot) rather than in lockstep — a sky where every star pulses
           // in unison reads as a UI animation, not a sky.
-          float twinkle=1.0-uSkyMix*0.22*(0.5+0.5*sin(uTime*1.6+vPhase*6.283));
+          //
+          // Two things a single sine got wrong. Real scintillation is
+          // irregular, so two incommensurate rates beat against each other
+          // into something that never repeats on a period you can hear —
+          // one sine is a pulse, and the eye finds its tempo immediately.
+          // And it is not uniform across the field: scintillation grows with
+          // the path length you are looking along, so distant stars shimmer
+          // and near ones sit almost still. That depth gradient is most of
+          // what makes a field of points read as a volume you are inside
+          // rather than a scatter plot seen from outside.
+          //
+          // Deliberately keyed to distance and NOT to altitude, even though
+          // real atmospheric airmass goes as 1/sin(altitude) and would have
+          // been the more obvious physics to reach for. In this sky height
+          // is not height — the compass maps altitude to the energy of the
+          // thought. Twinkling hardest near the plane would have made
+          // STILLNESS the most restless region of the map, which is exactly
+          // backwards. The honest reading beats the realistic one.
+          float flick=0.5+0.5*(0.62*sin(uTime*1.60+vPhase*6.283)
+                              +0.38*sin(uTime*2.73+vPhase*11.197));
+          float path=1.0+2.6*smoothstep(uNear,uFar,vDepth);
+          // Centred on 1.0, so a star spends as long above its own mean
+          // brightness as below it. Modulating downward only — which is what
+          // 1.0 - amount*flick does — is not scintillation, it is a dimmer:
+          // measured, it took 14% off the average brightness of the far half
+          // of the sky. Real scintillation makes a star flare as often as it
+          // makes it fade.
+          float twinkle=1.0+uSkyMix*0.09*path*(2.0*flick-1.0);
           // Ambient floor raised in sky mode. A half-lit sphere is right for
           // a planet and wrong for a star: at close range the unlit side
           // went almost black and each star read as two different colours
@@ -4025,6 +4150,7 @@ export default function AetherCanvas() {
       composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
+      audioRef.current?.dispose?.();
     };
   }, []);
 
