@@ -132,6 +132,21 @@ const FALLBACK_PALETTES: [string, string, string][] = [
   ["#050511", "#221166", "#aa88ff"],
 ];
 
+// Used when the network is gone and the client has to answer for itself. The
+// same rule as the server's list: concrete, about the world rather than the
+// self, and never "why" — abstract why-framed self-focus is the ruminative
+// mode this product exists to interrupt, not to rehearse.
+const CLIENT_QUESTIONS = [
+  "What happened in the minute before?",
+  "Where were you when it started?",
+  "What was the first sign?",
+  "Who else was there?",
+  "What did you do immediately after?",
+  "What would you have to see for this to be over?",
+  "When did you last notice it not happening?",
+  "What was the last thing said out loud?",
+];
+
 const FALLBACK_LINES = [
   "Even a single thought bends the dark into light.",
   "What you wonder, the stars rearrange to answer.",
@@ -1912,6 +1927,11 @@ interface SavedStar {
   form: FormType;
   energy: number;
   pos: [number,number,number];
+  // Turn two and three. Aether asks exactly one concrete question back, and
+  // if you answer it the star keeps a lit core forever after. Both optional,
+  // so every star saved before this existed still loads unchanged.
+  question?: string;
+  answer?: string;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -1972,6 +1992,13 @@ export default function AetherCanvas() {
   const [selectedStar, setSelectedStar] = useState<SavedStar|null>(null);
   const [starBorn,     setStarBorn]     = useState(false);
   const starBornTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
+  // The one question Aether asks back, and what you say to it. Held here
+  // rather than in a thread, because there is no thread: exactly one exchange
+  // happens and then the field closes. An app that keeps asking is a chat
+  // window, and a chat window wants your whole evening.
+  const [ask,          setAsk]          = useState<{id:number;q:string}|null>(null);
+  const [reply,        setReply]        = useState("");
+  const askTimer      = useRef<ReturnType<typeof setTimeout>|null>(null);
   const skyModeRef = useRef(false);
   useEffect(()=>{ skyModeRef.current=skyMode; },[skyMode]);
   // Carried into the imperative render loop so the targeting reticle can
@@ -1980,6 +2007,7 @@ export default function AetherCanvas() {
   const selectedIdRef = useRef<number|null>(null);
   useEffect(()=>{ selectedIdRef.current=selectedStar?.id??null; },[selectedStar]);
   useEffect(()=>()=>{ if (starBornTimer.current) clearTimeout(starBornTimer.current); },[]);
+  useEffect(()=>()=>{ if (askTimer.current) clearTimeout(askTimer.current); },[]);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -2309,6 +2337,11 @@ export default function AetherCanvas() {
     const memIdx=new Float32Array(CAP);
     for (let i=0;i<CAP;i++) memIdx[i]=i;
     memGeo.setAttribute("aIdx",new THREE.BufferAttribute(memIdx,1));
+    // 1 for a star whose question you answered. These are the thoughts you
+    // came back to and looked at, as opposed to the ones you only put down,
+    // and the sky should be able to tell the difference without saying so.
+    const memCored=new Float32Array(CAP);
+    memGeo.setAttribute("aCored",new THREE.BufferAttribute(memCored,1));
     memGeo.setDrawRange(0,0);
     // Memory stars get a procedural lit-glass material instead of a flat
     // gradient sprite — inspired by the material-physics restraint Lusion
@@ -2338,9 +2371,11 @@ export default function AetherCanvas() {
         attribute float aFocus;
         attribute float aVoice;
         attribute float aIdx;
+        attribute float aCored;
         uniform float uBirthIdx;
         uniform float uBirthK;
         varying float vBorn;
+        varying float vCored;
         varying vec3 vColor;
         varying float vPhase;
         varying float vDepth;
@@ -2382,6 +2417,7 @@ export default function AetherCanvas() {
           // exempt from the size clamp, because the clamp exists to stop
           // ordinary stars ballooning, and this one is supposed to.
           vBorn=(abs(aIdx-uBirthIdx)<0.5)?uBirthK:0.0;
+          vCored=aCored;
           float base=uSize*(1.0+aFocus*0.5)*(1.0+vRes*0.40)*(340.0/-mv.z);
           gl_PointSize=min(base,uMaxPx)+vBorn*26.0;
           gl_Position=projectionMatrix*mv;
@@ -2402,6 +2438,7 @@ export default function AetherCanvas() {
         varying float vRadial;
         varying float vRes;
         varying float vBorn;
+        varying float vCored;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
           float r=length(uv);
@@ -2508,6 +2545,16 @@ export default function AetherCanvas() {
           if (mx>0.0001) {
             float rolled=mx/(1.0+mx*0.34);
             col*=mix(1.0,rolled/mx,uSkyMix);
+          }
+          // An answered star keeps a small hot centre. Deliberately quiet — a
+          // badge would turn reflection into a score, and the point is that
+          // you can read your own sky at a glance and see which thoughts you
+          // actually went back and looked at. Sky-mode weighted, because on
+          // the home view these stars are background and should stay it.
+          if (vCored>0.5) {
+            float ck=(1.0-smoothstep(0.0,0.34,r))*(0.30+0.55*uSkyMix);
+            col+=mix(vColor,vec3(1.0),0.5)*ck*0.85;
+            alpha=min(1.0,alpha+ck*0.4);
           }
           // Ignition. Drawn after the rolloff and outside every sky-mode gate
           // on purpose: the birth happens on the home view, where uSkyMix is
@@ -3253,6 +3300,21 @@ export default function AetherCanvas() {
         // confirmation arrives from the direction the thing itself is in.
         audioRef.current?.skySelect?.(birthFrom[0],birthFrom[1],birthFrom[2]);
       },
+      // Turn three: the answer lands. The reply to what you wrote is not more
+      // text — it is this star acquiring a centre, holding still, and joining
+      // the chord. A conversation whose output is the world rather than a
+      // transcript, which is the only kind worth having inside a sky.
+      answerStar(idx:number) {
+        if (idx<0||idx>=CAP) return;
+        memCored[idx]=1;
+        memGeo.attributes.aCored.needsUpdate=true;
+        // A brief second ignition, gentler and shorter than birth: the star
+        // is not arriving, it is settling.
+        birthIdx=idx; birthAt=performance.now()-BIRTH_FLASH*1000*0.45;
+        birthTravelling=false;
+        const j=idx*3;
+        audioRef.current?.skySelect?.(memPos[j],memPos[j+1],memPos[j+2]);
+      },
       rebuildStars(arr:SavedStar[]) {
         // A rebuild is authoritative about positions, so a flight in progress
         // has to stop rather than keep writing over what was just loaded.
@@ -3265,8 +3327,10 @@ export default function AetherCanvas() {
             memPos[i*3]=s.pos[0]; memPos[i*3+1]=s.pos[1]; memPos[i*3+2]=s.pos[2];
             const rgb=hexToRGB(s.palette[2]);
             memCol[i*3]=rgb[0]; memCol[i*3+1]=rgb[1]; memCol[i*3+2]=rgb[2];
-          } else { memPos[i*3]=memPos[i*3+1]=memPos[i*3+2]=1e5; }
+            memCored[i]=s.answer?1:0;
+          } else { memPos[i*3]=memPos[i*3+1]=memPos[i*3+2]=1e5; memCored[i]=0; }
         }
+        memGeo.attributes.aCored.needsUpdate=true;
         memGeo.setDrawRange(0,n);
         // A sky of 8 and a sky of 120 should not draw stars at the same
         // size. The shell they sit on does not grow as you add thoughts,
@@ -4365,7 +4429,7 @@ export default function AetherCanvas() {
     } catch {}
   },[]);
 
-  const applyResult=useCallback((pal:string[],fm:FormType,en:number,text:string,save?:string)=>{
+  const applyResult=useCallback((pal:string[],fm:FormType,en:number,text:string,save?:string,question?:string)=>{
     // Spell the thought's most powerful word in stars before the galaxy forms
     const word=save
       ?save.split(/\s+/).map(w=>w.replace(/[^a-zA-Z0-9]/g,"")).sort((a,b)=>b.length-a.length)[0]?.toUpperCase().slice(0,12)
@@ -4374,13 +4438,26 @@ export default function AetherCanvas() {
     setForm(fm); setAccentColor(pal[2]||"#b892ff"); lastEnergy.current=en;
     if (audioRef.current) audioRef.current.transition(fm,en);
     showMorphLabel(fm);
-    if (save) remember({id:Date.now(),thought:save,whisper:text,palette:pal,form:fm,energy:en,pos:starPos(pal[2]||pal[1]||"#b892ff",en)});
+    if (save) {
+      const id=Date.now();
+      remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,
+        pos:starPos(pal[2]||pal[1]||"#b892ff",en),question});
+      // Held back until the star has finished its flight (2.6s) and you have
+      // read the line. Asking over the top of the animation would make the
+      // question feel like a form field on a loading screen; arriving after it
+      // lands makes it feel like the star asking.
+      if (askTimer.current) clearTimeout(askTimer.current);
+      if (question) askTimer.current=setTimeout(()=>{ setReply(""); setAsk({id,q:question}); },3500);
+    }
     setWhisper(text);
   },[remember,showMorphLabel]);
 
   const fallback=useCallback((text:string)=>{
     const h=hashStr(text||"void");
-    applyResult(FALLBACK_PALETTES[h%FALLBACK_PALETTES.length],FORMS[h%FORMS.length],Math.min(1,0.25+(text.length%80)/90),FALLBACK_LINES[h%FALLBACK_LINES.length],text);
+    applyResult(FALLBACK_PALETTES[h%FALLBACK_PALETTES.length],FORMS[h%FORMS.length],Math.min(1,0.25+(text.length%80)/90),FALLBACK_LINES[h%FALLBACK_LINES.length],text,
+      // The question survives the network being down. It is the part of the
+      // exchange that does not need a model to be worth answering.
+      CLIENT_QUESTIONS[h%CLIENT_QUESTIONS.length]);
   },[applyResult]);
 
   const release=useCallback(async(raw:string)=>{
@@ -4397,12 +4474,36 @@ export default function AetherCanvas() {
       const data=await res.json();
       const pal:string[]=Array.isArray(data.palette)&&data.palette.length>=3?data.palette.slice(0,3):FALLBACK_PALETTES[0];
       const fm:FormType=FORMS.includes(data.form)?data.form:"spiral";
-      applyResult(pal,fm,typeof data.energy==="number"?data.energy:0.5,String(data.whisper||FALLBACK_LINES[0]).slice(0,180),text);
+      applyResult(pal,fm,typeof data.energy==="number"?data.energy:0.5,String(data.whisper||FALLBACK_LINES[0]).slice(0,180),text,
+        typeof data.question==="string"&&data.question.length>6?data.question.slice(0,120):CLIENT_QUESTIONS[hashStr(text)%CLIENT_QUESTIONS.length]);
     } catch { fallback(text); }
     finally { setLoading(false); }
   },[loading,applyResult,fallback]);
 
-  const ask=useCallback(()=>release(thought),[release,thought]);
+  const askNow=useCallback(()=>release(thought),[release,thought]);
+
+  // Turn three. The answer is not sent anywhere to be replied to — it is
+  // attached to the star, and the star changes. That is the whole exchange.
+  const answerAsk=useCallback((raw:string)=>{
+    const text=raw.trim();
+    if (!text||!ask) return;
+    const id=ask.id;
+    const withAnswer=(s:SavedStar)=>s.id===id?{...s,answer:text.slice(0,300)}:s;
+    archiveRef.current=archiveRef.current.map(withAnswer);
+    starsRef.current=starsRef.current.map(withAnswer);
+    const idx=starsRef.current.findIndex(s=>s.id===id);
+    // Rebuild before igniting, the same order remember() uses. Without it the
+    // scene and the label layer keep holding the pre-answer objects, so
+    // anything downstream that reads a star — a tap, a label, the card — can
+    // be looking at a copy that never got the answer.
+    sceneRef.current.rebuildStars?.(starsRef.current);
+    if (idx>=0) sceneRef.current.answerStar?.(idx);
+    setList([...starsRef.current].reverse());
+    setSelectedStar(s=>s&&s.id===id?withAnswer(s):s);
+    try { localStorage.setItem("aether_stars",JSON.stringify(archiveRef.current)); } catch {}
+    setAsk(null); setReply("");
+    try{navigator.vibrate?.(18);}catch{}
+  },[ask]);
 
   const toggleSound=()=>{
     if (!audioRef.current) audioRef.current=makeAudio();
@@ -4752,6 +4853,59 @@ export default function AetherCanvas() {
         </div>
       )}
 
+      {/* Turn two: the one question. Not a chat thread — one exchange, and
+          then the field closes for good. It is skippable without penalty,
+          because a question you are obliged to answer is a form, and nobody
+          confides in a form. */}
+      <AnimatePresence>
+        {ask&&!zen&&!skyMode&&!loading&&(
+          <motion.div
+            key={ask.id}
+            initial={{opacity:0,y:14}} animate={{opacity:1,y:0}} exit={{opacity:0,y:8}}
+            transition={{duration:1.1,ease:[0.22,1,0.36,1]}}
+            style={{position:"absolute",left:0,right:0,bottom:104,display:"flex",flexDirection:"column",
+              alignItems:"center",gap:11,padding:"0 18px",zIndex:4}}
+          >
+            <div style={{display:"flex",alignItems:"center",gap:9,maxWidth:560}}>
+              <span style={{width:5,height:5,borderRadius:5,background:accentColor,
+                boxShadow:`0 0 9px ${accentColor}`,flexShrink:0}}/>
+              <span style={{color:"rgba(232,228,255,.9)",fontSize:14.5,lineHeight:1.45,
+                fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",
+                textShadow:"0 1px 10px rgba(0,0,0,.85)"}}>
+                {ask.q}
+              </span>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center",width:"100%",maxWidth:520}}>
+              <input
+                autoFocus
+                value={reply}
+                onChange={e=>setReply(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();answerAsk(reply);}
+                                if(e.key==="Escape"){setAsk(null);setReply("");} }}
+                placeholder="answer, or let it be…"
+                style={{flex:1,background:"rgba(14,10,28,.7)",backdropFilter:"blur(14px)",
+                  border:`1px solid ${a44}`,borderRadius:999,color:"#eee9ff",fontSize:13.5,
+                  padding:"11px 18px",fontFamily:"var(--font-serif), Georgia, serif",
+                  fontStyle:"italic",outline:"none"}}
+              />
+              <button onClick={()=>answerAsk(reply)} disabled={!reply.trim()}
+                style={{background:reply.trim()?`linear-gradient(135deg, ${a44}, ${a88}22)`:"rgba(20,16,36,.6)",
+                  border:`1px solid ${reply.trim()?a66:"rgba(150,130,230,.2)"}`,
+                  color:reply.trim()?"#ece8ff":"rgba(200,196,235,.35)",borderRadius:999,
+                  padding:"11px 18px",fontSize:11,letterSpacing:"0.16em",fontFamily:"inherit",
+                  cursor:reply.trim()?"pointer":"default",whiteSpace:"nowrap"}}>
+                ✦
+              </button>
+              <button onClick={()=>{setAsk(null);setReply("");}} aria-label="leave it unanswered"
+                style={{background:"none",border:"none",color:"rgba(200,196,235,.4)",fontSize:15,
+                  cursor:"pointer",padding:"6px 4px",lineHeight:1}}>
+                ✕
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* First Contact — guided first whisper */}
       <AnimatePresence>
         {/* Not in sky mode: prompts to write your first thought have no
@@ -4823,14 +4977,14 @@ export default function AetherCanvas() {
             disabled={loading}
             rows={1}
             onChange={e=>setThought(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask();}}}
+            onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();askNow();}}}
             onFocus={()=>setInputFocused(true)}
             onBlur={()=>setInputFocused(false)}
             placeholder={narrow?"whisper a thought…":"whisper a thought to the cosmos…"}
             style={{flex:1,background:"rgba(14,10,28,.65)",backdropFilter:"blur(14px)",border:`1px solid ${inputFocused?a66:"rgba(150,130,230,.26)"}`,borderRadius:999,color:"#eee9ff",fontSize:narrow?13.5:15,padding:narrow?"13px 14px":"13px 22px",fontFamily:"inherit",resize:"none",outline:"none",lineHeight:1.4,boxShadow:inputFocused?`0 0 24px ${a44}, inset 0 0 12px rgba(0,0,0,.3)`:"none",transition:"border-color 0.4s ease, box-shadow 0.4s ease"}}
           />
           <button
-            onClick={ask}
+            onClick={askNow}
             disabled={loading}
             style={{background:`linear-gradient(135deg, ${a44}, ${a88}22)`,border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:"13px 24px",fontSize:13,letterSpacing:"0.18em",cursor:loading?"default":"pointer",whiteSpace:"nowrap",fontFamily:"inherit",boxShadow:loading?"none":`0 0 22px ${a44}`,transition:"all 0.4s ease"}}
           >
@@ -4971,6 +5125,21 @@ export default function AetherCanvas() {
               <div style={{color:"rgba(226,220,255,.72)",fontSize:12.5,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",lineHeight:1.5,marginBottom:14}}>
                 “{selectedStar.whisper}”
               </div>
+              {/* The exchange, if there was one. Shown as question and answer
+                  rather than as a chat log, because two lines are not a
+                  conversation and should not be dressed as one. Only the
+                  stars you came back to have this — which is the whole
+                  reason the core is lit on them and not on the others. */}
+              {selectedStar.answer&&selectedStar.question&&(
+                <div style={{borderLeft:`1px solid ${selectedStar.palette[2]}44`,paddingLeft:11,marginBottom:14}}>
+                  <div style={{color:"rgba(200,196,235,.42)",fontSize:11,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",lineHeight:1.45,marginBottom:4}}>
+                    {selectedStar.question}
+                  </div>
+                  <div style={{color:"#ece8ff",fontSize:13,fontFamily:"var(--font-serif), Georgia, serif",lineHeight:1.5}}>
+                    {selectedStar.answer}
+                  </div>
+                </div>
+              )}
               <div style={{display:"flex",gap:8}}>
                 <button onClick={()=>revisit(selectedStar)}
                   style={{flex:1,background:`linear-gradient(135deg,${a44},${a66}33)`,border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:"9px 12px",fontSize:9.5,letterSpacing:"0.16em",cursor:"pointer",fontFamily:"inherit"}}>

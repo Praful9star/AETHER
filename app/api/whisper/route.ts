@@ -90,6 +90,53 @@ const FALLBACK_WHISPERS = [
   "Held long enough, anything starts to shine.",
 ];
 
+// ── The one question ────────────────────────────────────────────────────────
+// Aether asks exactly one thing back, and it is always concrete.
+//
+// This is not a tone preference. Rumination research (Watkins) identifies
+// abstract, decontextualised, "why"-framed self-focus as the ruminative mode —
+// "why did this happen to me", "why am I like this" — and specific, contextual,
+// sensory, "how/what/where"-framed processing as the adaptive one; his
+// concreteness training beat both a waiting list and a bogus-training control
+// on depressive symptoms. An app for overthinkers that asks "why do you feel
+// that way?" is pushing on the exact mechanism it claims to relieve.
+//
+// So the model is allowed to write the question, but it does not get the final
+// say. Anything abstract is thrown away and replaced.
+const CONCRETE_QUESTIONS = [
+  "What happened in the minute before?",
+  "Where were you when it started?",
+  "What was the first sign?",
+  "Who else was there?",
+  "What time of day was it?",
+  "What did you do immediately after?",
+  "What would you have to see for this to be over?",
+  "What is the smallest part of this that is actually true?",
+  "When did you last notice it not happening?",
+  "What were your hands doing?",
+  "What was the last thing said out loud?",
+  "Which part of it happened first?",
+];
+
+// Openings that mark the abstract mode, whatever follows them.
+const BANNED_OPENINGS = [
+  "why", "what does that say", "what does this say", "what do you think it means",
+  "how do you feel about", "what does it mean", "how does that make you feel",
+];
+
+function cleanQuestion(raw: unknown, thought: string): string {
+  const fallback = CONCRETE_QUESTIONS[hashString("q" + thought) % CONCRETE_QUESTIONS.length];
+  if (typeof raw !== "string") return fallback;
+  const q = raw.trim().replace(/\s+/g, " ");
+  // One sentence, actually a question, short enough to read in a glance.
+  if (q.length < 8 || q.length > 90) return fallback;
+  if (!q.endsWith("?")) return fallback;
+  if ((q.match(/\?/g) ?? []).length > 1) return fallback;
+  const low = q.toLowerCase();
+  if (BANNED_OPENINGS.some(b => low.startsWith(b) || low.includes(" " + b))) return fallback;
+  return q;
+}
+
 function buildFallback(thought: string) {
   const h = hashString(thought);
   return {
@@ -97,6 +144,7 @@ function buildFallback(thought: string) {
     palette: FALLBACK_PALETTES[h % FALLBACK_PALETTES.length],
     form: FORMS[h % FORMS.length],
     energy: ((h % 100) / 100) * 0.7 + 0.2,
+    question: CONCRETE_QUESTIONS[hashString("q" + thought) % CONCRETE_QUESTIONS.length],
   };
 }
 
@@ -153,8 +201,18 @@ MAP THE HUMAN'S THOUGHT to whichever form best captures its emotional essence. T
 
 The "whisper" line is the one thing the human will actually read back — it must sound like it was written FOR this specific thought, not a generic cosmic aphorism that could follow any input. Ground it in a concrete image, word, or detail actually present in what they wrote — reflect their specific situation back through a cosmic lens, don't paraphrase generic profundity at them. Two different thoughts should never plausibly produce the same or similar-sounding line. Never use the literal words "your thought" — refer to what they actually said.
 
+The "question" is the single thing you ask back, and there are hard rules.
+It must be CONCRETE: about a specific detail, moment, place, order of events,
+sensation, or observable fact in what they described. It must NOT be abstract,
+interpretive, or introspective. Never ask "why". Never ask what something
+means, what it says about them, or how it makes them feel. Ask about the world,
+not about the self: what happened just before, where they were, who else was
+there, what the first sign was, what they did next, what would have to change
+for it to be over. One short sentence, ending in a question mark, under 90
+characters. Plain language — this is the one moment you do not sound cosmic.
+
 Reply with ONLY raw JSON:
-{"whisper": "<one line, max 26 words, grounded in a specific detail from their exact thought, no clichés, no generic cosmic aphorisms>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], "form": "<one of the 34 form names>", "energy": <0.0-1.0>}
+{"whisper": "<one line, max 26 words, grounded in a specific detail from their exact thought, no clichés, no generic cosmic aphorisms>", "palette": ["<hex dark>", "<hex mid>", "<hex luminous>"], "form": "<one of the 34 form names>", "energy": <0.0-1.0>, "question": "<one short concrete question about a specific detail, never why, never about meaning or feelings>"}
 
 JSON only. No markdown. No explanation. No wrapper text.`;
 
@@ -207,6 +265,7 @@ export async function POST(req: Request) {
       palette: json.palette.map(String),
       form: FORMS.includes(json.form as FormType) ? json.form : "spiral",
       energy: Math.max(0, Math.min(1, Number(json.energy) || 0.5)),
+      question: cleanQuestion(json.question, sanitized),
     });
   } catch (err) {
     // The failure was completely silent: the catch swallowed everything and
