@@ -2273,6 +2273,26 @@ export default function AetherCanvas() {
     // frame so attention moves smoothly rather than snapping.
     const memFocus=new Float32Array(CAP);
     const memFocusTgt=new Float32Array(CAP);
+    // Which star is currently igniting, and when it started. -1 for none.
+    let birthIdx=-1, birthAt=0;
+    const BIRTH_FLASH=0.55;   // seconds to full ignition
+    const BIRTH_SETTLE=6.5;   // seconds fading back to an ordinary star
+    const BIRTH_TRAVEL=2.6;   // seconds flying out from the galaxy to its place
+    // Where the newborn starts and where it belongs. Flying it out is not
+    // decoration, it is the fix for why none of this was ever visible: stars
+    // are seeded at radius 52-76, while the home camera sits at roughly 40
+    // with a 50-degree vertical fov, which puts about radius 25 on screen.
+    // Every star this app has ever made was created outside the frame. You
+    // were told a star was born and shown the empty middle of a galaxy.
+    //
+    // Now it is born at the core — where the thought was just turned into a
+    // galaxy — and travels out to its own place in the sky. The whole first
+    // half of that journey is on screen, and the part where it leaves is the
+    // honest picture of what the app actually does with a thought: it puts it
+    // somewhere far enough away that you have to go and look at it.
+    const birthFrom=new Float32Array(3);
+    const birthTo=new Float32Array(3);
+    let birthTravelling=false;
     const memGeo=new THREE.BufferGeometry();
     memGeo.setAttribute("position",new THREE.BufferAttribute(memPos,3));
     memGeo.setAttribute("color",new THREE.BufferAttribute(memCol,3));
@@ -2283,6 +2303,12 @@ export default function AetherCanvas() {
     // voice's own breathing rate exactly.
     const memVoice=new Float32Array(CAP);
     memGeo.setAttribute("aVoice",new THREE.BufferAttribute(memVoice,1));
+    // Stable slot index per point, so a uniform can name one star. Needed for
+    // the birth flare: the newborn has to be identifiable in the shader
+    // without disturbing aFocus, which hover and selection already own.
+    const memIdx=new Float32Array(CAP);
+    for (let i=0;i<CAP;i++) memIdx[i]=i;
+    memGeo.setAttribute("aIdx",new THREE.BufferAttribute(memIdx,1));
     memGeo.setDrawRange(0,0);
     // Memory stars get a procedural lit-glass material instead of a flat
     // gradient sprite — inspired by the material-physics restraint Lusion
@@ -2293,7 +2319,10 @@ export default function AetherCanvas() {
     // galaxy — cheap, and isolated from everything else on the canvas.
     const memUniforms={uSize:{value:3.6},uMaxPx:{value:34},uOpacity:{value:0.95},uSkyMix:{value:0},uTime:{value:0},
       uNear:{value:30},uFar:{value:140},uHover:{value:0},
-      uSweepR:{value:-1},uSweepW:{value:4}};
+      uSweepR:{value:-1},uSweepW:{value:4},
+      // The newborn star: which slot, and how far through its ignition it is.
+      // -1 means nothing is being born.
+      uBirthIdx:{value:-1},uBirthK:{value:0}};
     const memMat=new THREE.ShaderMaterial({
       uniforms:memUniforms,
       vertexColors:true,
@@ -2308,6 +2337,10 @@ export default function AetherCanvas() {
         attribute float aPhase;
         attribute float aFocus;
         attribute float aVoice;
+        attribute float aIdx;
+        uniform float uBirthIdx;
+        uniform float uBirthK;
+        varying float vBorn;
         varying vec3 vColor;
         varying float vPhase;
         varying float vDepth;
@@ -2340,7 +2373,17 @@ export default function AetherCanvas() {
           // of stars because none happen to sit near the camera, but at
           // full capacity several always do and they balloon into orbs
           // that swallow the frame. A star is a star at any distance.
-          gl_PointSize=min(uSize*(1.0+aFocus*0.5)*(1.0+vRes*0.40)*(340.0/-mv.z),uMaxPx);
+          // A thought becoming a star was, until now, something the app told
+          // you rather than something you watched: the point was written into
+          // the buffer at 1.8px and 0.32 opacity, one faint dot among forty
+          // thousand galaxy particles, and you only ever met it later by
+          // opening MY SKY. The single promise the product makes was the one
+          // moment it never showed. This is that moment — and it has to be
+          // exempt from the size clamp, because the clamp exists to stop
+          // ordinary stars ballooning, and this one is supposed to.
+          vBorn=(abs(aIdx-uBirthIdx)<0.5)?uBirthK:0.0;
+          float base=uSize*(1.0+aFocus*0.5)*(1.0+vRes*0.40)*(340.0/-mv.z);
+          gl_PointSize=min(base,uMaxPx)+vBorn*26.0;
           gl_Position=projectionMatrix*mv;
         }`,
       fragmentShader:`
@@ -2358,6 +2401,7 @@ export default function AetherCanvas() {
         varying float vFocus;
         varying float vRadial;
         varying float vRes;
+        varying float vBorn;
         void main(){
           vec2 uv=gl_PointCoord*2.0-1.0;
           float r=length(uv);
@@ -2464,6 +2508,18 @@ export default function AetherCanvas() {
           if (mx>0.0001) {
             float rolled=mx/(1.0+mx*0.34);
             col*=mix(1.0,rolled/mx,uSkyMix);
+          }
+          // Ignition. Drawn after the rolloff and outside every sky-mode gate
+          // on purpose: the birth happens on the home view, where uSkyMix is
+          // 0 and every enrichment above has been multiplied away to nothing.
+          // A hot white core, and a shell expanding out through the sprite —
+          // so the star does not merely appear, it arrives.
+          if (vBorn>0.0) {
+            float shell=1.0-abs(r-(1.0-vBorn)*0.92)/0.16;
+            float coreK=pow(vBorn,0.6)*(1.0-smoothstep(0.0,0.5,r));
+            vec3 hot=mix(vColor,vec3(1.0),0.55);
+            col+=hot*(coreK*2.4+max(0.0,shell)*vBorn*1.5);
+            alpha=min(1.0,alpha+coreK*1.1+max(0.0,shell)*vBorn*0.8);
           }
           gl_FragColor=vec4(col,alpha);
         }`,
@@ -3171,7 +3227,36 @@ export default function AetherCanvas() {
           nextRefitAt=performance.now()+4600; refitUntil=performance.now()+16000;
         }
       },
+      // Ignite one star, by slot. Called right after a thought is remembered,
+      // so the moment the product is named after finally happens on screen:
+      // the thought becomes a specific point of light, at its own real place
+      // in the sky, while you are still looking at the galaxy it made.
+      //
+      // Deliberately does not move the camera. Being shown the star is the
+      // point; being flown to it would take the galaxy away, and the galaxy
+      // is the answer to what the thought *was*. The star is where it now
+      // lives. You should see both at once.
+      birthStar(idx:number) {
+        if (idx<0||idx>=CAP) return;
+        birthIdx=idx; birthAt=performance.now();
+        const j=idx*3;
+        birthTo[0]=memPos[j]; birthTo[1]=memPos[j+1]; birthTo[2]=memPos[j+2];
+        // Starts just clear of the core rather than exactly on it: dead centre
+        // puts it inside the core's own bloom, where an ignition is invisible
+        // for the same reason a match is invisible in front of a floodlight.
+        const len=Math.max(0.001,Math.hypot(birthTo[0],birthTo[1],birthTo[2]));
+        for (let k=0;k<3;k++) birthFrom[k]=birthTo[k]/len*5.5;
+        memPos[j]=birthFrom[0]; memPos[j+1]=birthFrom[1]; memPos[j+2]=birthFrom[2];
+        memGeo.attributes.position.needsUpdate=true;
+        birthTravelling=true;
+        // From the star's own position, through the HRTF graph — so the
+        // confirmation arrives from the direction the thing itself is in.
+        audioRef.current?.skySelect?.(birthFrom[0],birthFrom[1],birthFrom[2]);
+      },
       rebuildStars(arr:SavedStar[]) {
+        // A rebuild is authoritative about positions, so a flight in progress
+        // has to stop rather than keep writing over what was just loaded.
+        birthTravelling=false;
         const n=Math.min(arr.length,CAP);
         syncLabels(arr.slice(0,n));
         for (let i=0;i<CAP;i++) {
@@ -3737,6 +3822,31 @@ export default function AetherCanvas() {
       memUniforms.uOpacity.value=0.32+memSkyMix*0.55;
       memUniforms.uSkyMix.value=memSkyMix;
       memUniforms.uTime.value=t;
+      // Birth envelope, on the wall clock rather than accumulated dt: this is
+      // choreography, and a frame-rate-dependent timeline runs at the wrong
+      // speed on exactly the machine that can least afford it.
+      if (birthIdx>=0) {
+        const age=(now-birthAt)/1000;
+        // A fast flash, then a long settle. The flash is what you notice; the
+        // settle is what lets you find the star again after noticing it, and
+        // is the reason this lasts seconds rather than milliseconds.
+        const k=age<BIRTH_FLASH
+          ? Math.pow(age/BIRTH_FLASH,0.45)
+          : Math.max(0,1-(age-BIRTH_FLASH)/BIRTH_SETTLE);
+        memUniforms.uBirthIdx.value=birthIdx;
+        memUniforms.uBirthK.value=k;
+        if (birthTravelling) {
+          const p=Math.min(1,age/BIRTH_TRAVEL);
+          // Ease-out cubic: it leaves fast, the way something released does,
+          // and arrives slowly enough that you can follow it out.
+          const e=1-Math.pow(1-p,3);
+          const j=birthIdx*3;
+          for (let k2=0;k2<3;k2++) memPos[j+k2]=birthFrom[k2]+(birthTo[k2]-birthFrom[k2])*e;
+          memGeo.attributes.position.needsUpdate=true;
+          if (p>=1) birthTravelling=false;
+        }
+        if (age>BIRTH_FLASH+BIRTH_SETTLE) { birthIdx=-1; memUniforms.uBirthIdx.value=-1; memUniforms.uBirthK.value=0; }
+      }
       // Depth range tracks the camera so the haze cue stays correct at any
       // zoom — near plane just inside the orbit, far plane past the back of
       // the field.
@@ -4187,6 +4297,10 @@ export default function AetherCanvas() {
     archiveRef.current=all;
     starsRef.current=all.slice(-CAP);
     sceneRef.current.rebuildStars?.(starsRef.current);
+    // Slot order matches array order inside rebuildStars, so the thought just
+    // added is the last slot in use. Ignite it: a toast saying a star was made
+    // is a claim, and the star lighting up where it actually lives is proof.
+    sceneRef.current.birthStar?.(starsRef.current.length-1);
     setList([...starsRef.current].reverse());
     setCount(starsRef.current.length);
     try { localStorage.setItem("aether_stars",JSON.stringify(all)); } catch {}
