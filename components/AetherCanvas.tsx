@@ -168,11 +168,6 @@ const CinematicShader = {
     uTime:    { value: 0 },
     uWarp:    { value: 0 },
     uTod:     { value: 0 }, // -1 cold midnight … +1 warm golden hour
-    // Pixel dimensions of the render target. Grain and dither must be sized
-    // in pixels, not in UV: keyed to UV they get finer as the canvas gets
-    // bigger, so the same scene has different grain on a laptop and on a 4K
-    // monitor, and the dither stops being a per-pixel dither at all.
-    uRes:     { value: new THREE.Vector2(1, 1) },
   },
   vertexShader: `
     varying vec2 vUv;
@@ -182,15 +177,7 @@ const CinematicShader = {
     uniform float uTime;
     uniform float uWarp;
     uniform float uTod;
-    uniform vec2 uRes;
     varying vec2 vUv;
-
-    // Interleaved gradient noise. Cheap, and far better decorrelated than a
-    // sin-dot hash, which is what makes it the right thing for dither.
-    float ign(vec2 p){
-      return fract(52.9829189*fract(dot(p,vec2(0.06711056,0.00583715))));
-    }
-
     void main(){
       vec2 c=vUv-0.5;
       float r=length(c);
@@ -207,27 +194,11 @@ const CinematicShader = {
       col.r*=1.0+uTod*0.06;
       col.b*=1.0-uTod*0.06;
       col.g*=1.0+uTod*0.015;
+      // animated film grain
+      float g=fract(sin(dot(vUv+fract(uTime)*vec2(1.7,9.1),vec2(12.9898,78.233)))*43758.5453);
+      col+=(g-0.5)*0.028;
       // cinematic vignette
       col*=1.0-r*r*0.45;
-
-      vec2 px=vUv*uRes;
-      // Film grain, weighted by luminance. Flat grain across the frame lands
-      // hardest on the blacks, which is where film has the least of it and
-      // where video noise has the most — it is the single cue that makes a
-      // dark render look like a cheap capture instead of a photograph. This
-      // peaks in the midtones and falls away at both ends.
-      float lum=dot(col,vec3(0.2126,0.7152,0.0722));
-      float gw=4.0*lum*(1.0-lum);
-      float g=ign(px+fract(uTime)*vec2(137.0,241.0));
-      col+=(g-0.5)*0.05*gw;
-
-      // Ordered dither, last, at one 8-bit step. The frame is mostly a very
-      // dark gradient, and an 8-bit buffer quantises that into visible
-      // concentric bands — the flaw you cannot unsee once you have seen it,
-      // and the one most responsible for a space scene looking rendered
-      // rather than photographed. A sub-LSB offset per pixel turns the band
-      // edges into noise the eye integrates away.
-      col+=(ign(px)-0.5)/255.0;
       gl_FragColor=vec4(col,1.0);
     }`,
 };
@@ -2163,44 +2134,8 @@ export default function AetherCanvas() {
     scene.fog=new THREE.FogExp2(0x050308,0.003);
     const camera=new THREE.PerspectiveCamera(60,mount.clientWidth/mount.clientHeight,0.1,600);
 
-    // Cinematic bloom post-processing.
-    //
-    // Half-float render targets rather than EffectComposer's default 8-bit
-    // ones. This is the change that matters for how the scene reads, and it
-    // is worth being precise about why, because the obvious fix — bolting a
-    // filmic tonemap onto the end — cannot work here and I measured that it
-    // does not: applied to an already display-referred 8-bit image, an ACES
-    // curve has no headroom to compress and simply lifts the black level
-    // (measured: the dark background more than doubled, 15.9 to 32.9 of
-    // 255, which for deep space is the worst possible direction).
-    //
-    // The actual problem is quantisation between passes. Four stages —
-    // render, afterimage, bloom, grade — each read and wrote an 8-bit
-    // buffer, so every stage rounded the previous one's output to 1/255 and
-    // the errors compounded. In a frame that is mostly very dark gradient
-    // that shows up as banding, and it is why the afterimage trails stepped
-    // instead of fading. Half float gives the chain real precision and lets
-    // values above 1.0 survive to the bloom, which is what bloom wants:
-    // bright cores now carry actual intensity into the threshold rather than
-    // arriving pre-clipped and flat.
-    //
-    // Cost is memory bandwidth, and the existing low-FPS step-down already
-    // handles machines that cannot afford it.
-    const rtType=renderer.capabilities.isWebGL2||renderer.extensions.has("OES_texture_half_float")
-      ? THREE.HalfFloatType : THREE.UnsignedByteType;
-    const dbSize=renderer.getDrawingBufferSize(new THREE.Vector2());
-    // And multisampling, which the renderer was asked for and never got.
-    // `new WebGLRenderer({antialias:true})` only antialiases the default
-    // framebuffer. Every pass here draws into an offscreen target instead, and
-    // EffectComposer's own default target has no samples — so the flag has
-    // been silently doing nothing since post-processing was added, and the
-    // thin hairlines of the reference plane and the compass spokes have been
-    // aliased the whole time. Those are the only hard edges in the scene,
-    // which is exactly why it was easy to miss.
-    const composer=new EffectComposer(renderer,new THREE.WebGLRenderTarget(
-      Math.max(1,dbSize.x),Math.max(1,dbSize.y),
-      {type:rtType,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,
-       samples:renderer.capabilities.isWebGL2?4:0}));
+    // Cinematic bloom post-processing
+    const composer=new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene,camera));
     // Dreamy motion trails — length reacts to energy and morph warps
     const afterimage=new AfterimagePass(0.3);
@@ -2214,7 +2149,6 @@ export default function AetherCanvas() {
     composer.addPass(bloom);
     const cinematic=new ShaderPass(CinematicShader as any);
     composer.addPass(cinematic);
-    const cineRes=new THREE.Vector2();
 
     const cv=document.createElement("canvas"); cv.width=cv.height=128;
     const c2=cv.getContext("2d")!;
@@ -3528,11 +3462,6 @@ export default function AetherCanvas() {
         renderer.setSize(1080,1920); composer.setSize(1080,1920);
         camera.aspect=1080/1920; camera.updateProjectionMatrix();
         memLineMat.resolution.set(1080,1920);
-        // The capture paths resize the target, so the pass needs to be told
-        // before it draws — otherwise the one frame that becomes a shareable
-        // image is the one frame with mis-sized grain.
-        renderer.getDrawingBufferSize(cineRes);
-        cinematic.uniforms.uRes.value.copy(cineRes);
         composer.render();
         const out=document.createElement("canvas"); out.width=1080; out.height=1920;
         const o=out.getContext("2d")!;
@@ -3563,11 +3492,6 @@ export default function AetherCanvas() {
         renderer.setSize(W,H); composer.setSize(W,H);
         camera.aspect=W/H; camera.updateProjectionMatrix();
         memLineMat.resolution.set(W,H);
-        // The capture paths resize the target, so the pass needs to be told
-        // before it draws — otherwise the one frame that becomes a shareable
-        // image is the one frame with mis-sized grain.
-        renderer.getDrawingBufferSize(cineRes);
-        cinematic.uniforms.uRes.value.copy(cineRes);
         composer.render();
         return url;
       },
@@ -4327,11 +4251,6 @@ export default function AetherCanvas() {
       bloom.strength=(spelling?0.2:0.3+displayEnergy*0.35+warp*0.35+aLvl*0.3)*qBloomMul*skyBloomMul;
       (afterimage.uniforms as any).damp.value=spelling?0.05:Math.min(0.82,0.28+displayEnergy*0.15+warp*0.45);
       cinematic.uniforms.uTime.value=t;
-      // Read from the renderer rather than tracked alongside resize, so it
-      // stays right through the quality step-down (which changes the pixel
-      // ratio) and through the capture passes (which resize to 1080x1920).
-      renderer.getDrawingBufferSize(cineRes);
-      cinematic.uniforms.uRes.value.copy(cineRes);
       cinematic.uniforms.uWarp.value=Math.sin(warp*Math.PI);
       // Real local time → warm midday (+1), cold small-hours (-1)
       const hr=new Date().getHours()+new Date().getMinutes()/60;
