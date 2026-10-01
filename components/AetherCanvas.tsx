@@ -1996,6 +1996,7 @@ export default function AetherCanvas() {
   // rather than in a thread, because there is no thread: exactly one exchange
   // happens and then the field closes. An app that keeps asking is a chat
   // window, and a chat window wants your whole evening.
+  const [confirmForget,setConfirmForget]= useState<number|null>(null);
   const [ask,          setAsk]          = useState<{id:number;q:string}|null>(null);
   const [reply,        setReply]        = useState("");
   const askTimer      = useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -4607,7 +4608,35 @@ export default function AetherCanvas() {
     setCaptureURL(c.toDataURL("image/png"));
     setPanel(false);
   },[streak]);
-  const clearStars=()=>{ starsRef.current=[];sceneRef.current.rebuildStars?.([]);setList([]);setCount(0); try{localStorage.removeItem("aether_stars");}catch{} };
+  // Deleting has to actually delete. This cleared starsRef and localStorage
+  // but left archiveRef — the full untruncated history — untouched in memory,
+  // and remember() writes `[...archiveRef.current, s]` straight back to
+  // storage. So dissolving your sky and then whispering one new thought
+  // resurrected every thought you had just deleted. For the one feature whose
+  // entire job is to make something go away, that is the worst possible bug,
+  // and it is silent: nothing looks wrong until the old stars reappear.
+  const clearStars=()=>{
+    archiveRef.current=[];
+    starsRef.current=[];
+    sceneRef.current.rebuildStars?.([]);
+    setList([]); setCount(0);
+    setSelectedStar(null); setAsk(null); setShareId(null);
+    try{localStorage.removeItem("aether_stars");}catch{}
+  };
+
+  // All-or-nothing was the only option, which is no good when one thought out
+  // of ninety is the problem. Removes a single star everywhere: the archive,
+  // the drawn buffer, the list, and storage.
+  const forgetStar=useCallback((id:number)=>{
+    archiveRef.current=archiveRef.current.filter(s=>s.id!==id);
+    starsRef.current=archiveRef.current.slice(-CAP);
+    sceneRef.current.rebuildStars?.(starsRef.current);
+    setList([...starsRef.current].reverse());
+    setCount(starsRef.current.length);
+    setSelectedStar(s=>s&&s.id===id?null:s);
+    setAsk(a=>a&&a.id===id?null:a);
+    try{localStorage.setItem("aether_stars",JSON.stringify(archiveRef.current));}catch{}
+  },[]);
 
   const shareWhisper=useCallback(async()=>{
     const link=shareId?`${window.location.origin}/w/${shareId}`:window.location.origin;
@@ -5061,10 +5090,24 @@ export default function AetherCanvas() {
                 </div>
               )}
               {list.map(s=>(
-                <div key={s.id} onClick={()=>revisit(s)} style={{padding:"12px 12px",borderRadius:10,cursor:"pointer",marginBottom:3}}>
+                <div key={s.id} onClick={()=>revisit(s)} style={{padding:"12px 12px",borderRadius:10,cursor:"pointer",marginBottom:3,position:"relative"}}>
                   <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:5}}>
                     <span style={{width:8,height:8,borderRadius:8,background:s.palette[2],boxShadow:`0 0 10px ${s.palette[2]}`,display:"inline-block",flexShrink:0}}/>
                     <span style={{color:s.palette[2],fontSize:8,letterSpacing:"0.22em",opacity:0.8}}>{FORM_LABELS[s.form]??s.form.toUpperCase()}</span>
+                    {/* Per-star delete. Confirms once, because this is the one
+                        control in the app that destroys something, and the row
+                        it sits on is otherwise a tap target for revisiting. */}
+                    <button
+                      aria-label="forget this star"
+                      onClick={e=>{ e.stopPropagation();
+                        if (confirmForget===s.id) forgetStar(s.id);
+                        else setConfirmForget(s.id); }}
+                      style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",
+                        color:confirmForget===s.id?"rgba(255,150,170,.95)":"rgba(200,196,235,.3)",
+                        fontSize:confirmForget===s.id?8.5:14,letterSpacing:confirmForget===s.id?"0.18em":"0",
+                        padding:"2px 2px",lineHeight:1,fontFamily:"inherit",flexShrink:0}}>
+                      {confirmForget===s.id?"FORGET?":"×"}
+                    </button>
                   </div>
                   <div style={{color:"#ece8ff",fontSize:13.5,fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",lineHeight:1.5}}>{s.whisper}</div>
                 </div>
