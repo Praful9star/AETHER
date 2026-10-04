@@ -1961,9 +1961,14 @@ function makeSpeech() {
   const pick = () => {
     const all = synth.getVoices().filter(v => /^en/i.test(v.lang) && !JUNK.test(v.name));
     if (!all.length) return;
+    const region = (navigator.language || "en-US").split("-")[1]?.toUpperCase() ?? "";
     const score = (v: SpeechSynthesisVoice) =>
       (GREAT.test(v.name) ? 4 : 0) + (GOOD.test(v.name) ? 2 : 0) +
-      (v.localService ? 1 : 0) + (v.default ? 1 : 0);
+      (v.localService ? 1 : 0) + (v.default ? 1 : 0) +
+      // Match the listener's own English. Hearing a flat American voice when
+      // everything else about the page is yours is a small, constant note of
+      // wrongness, and en-IN or en-GB usually exists alongside it.
+      (region && v.lang.toUpperCase().endsWith("-" + region) ? 3 : 0);
     voice = all.slice().sort((a, b) => score(b) - score(a))[0];
   };
   pick();
@@ -2007,6 +2012,74 @@ function makeSpeech() {
     }, 280);
   };
 
+  // Clauses, not sentences. A line spoken as one unbroken utterance at one
+  // fixed rate is the single biggest reason browser speech sounds like a
+  // machine: real speech breathes, and the breath lands at the punctuation.
+  // Splitting there and leaving a real gap costs nothing and changes the
+  // character of the voice more than any rate or pitch setting does.
+  const splitClauses = (line: string) => {
+    const out: string[] = [];
+    let buf = "";
+    for (const ch of line) {
+      buf += ch;
+      if (/[,;:.!?\u2014\u2013]/.test(ch)) { out.push(buf.trim()); buf = ""; }
+    }
+    if (buf.trim()) out.push(buf.trim());
+    // A two-word fragment is not a clause, it is a stumble. Fold it back.
+    const merged: string[] = [];
+    for (const part of out) {
+      if (merged.length && part.replace(/[^a-z]/gi, "").length < 14) merged[merged.length - 1] += " " + part;
+      else merged.push(part);
+    }
+    return merged.length ? merged : [line];
+  };
+
+  // A queue, not a kill switch. The first version bumped a generation counter
+  // on every say(), which meant the question — scheduled 3.5s after the line,
+  // while a twenty-six word whisper is still ten seconds from finishing —
+  // silently killed the rest of the line it was supposed to follow. Browsers'
+  // own speechSynthesis queues utterances for exactly this reason; the clause
+  // splitting took us off that queue, so we have to keep one ourselves.
+  type Phrase = { parts: string[]; rate: number; pitch: number; volume: number };
+  const queue: Phrase[] = [];
+  let gen = 0;          // bumped only by cancel(), which abandons everything
+  let running = false;
+
+  const runNext = (mine: number) => {
+    if (mine !== gen) return;
+    const phrase = queue.shift();
+    if (!phrase) { running = false; finish(); return; }
+    const { parts, rate, pitch, volume } = phrase;
+
+    const speakAt = (i: number) => {
+      if (mine !== gen) return;
+      if (i >= parts.length) { runNext(mine); return; }
+      try {
+        const u = new SpeechSynthesisUtterance(parts[i]);
+        if (voice) { u.voice = voice; u.lang = voice.lang; }
+        // Progressive deceleration: start near the intended rate and ease down
+        // across the line, slowest on the last clause. A named technique from
+        // guided relaxation — delivery that decelerates invites the listener's
+        // own rhythm to follow it down.
+        const k = parts.length > 1 ? i / (parts.length - 1) : 0;
+        u.rate = Math.max(0.5, rate * (1 - 0.09 * k));
+        u.pitch = pitch; u.volume = volume;
+        u.onstart = () => { if (mine === gen) { sawBoundary = false; beat(); } };
+        u.onboundary = () => { sawBoundary = true; beat(); };
+        // The gap widens toward the end — final lengthening, which every
+        // human speaker does without noticing they are doing it.
+        const after = () => {
+          if (mine !== gen) return;
+          setTimeout(() => speakAt(i + 1), i === parts.length - 2 ? 420 : 230);
+        };
+        u.onend = after;
+        u.onerror = after;
+        synth.speak(u);
+      } catch { runNext(mine); }
+    };
+    speakAt(0);
+  };
+
   const api = {
     get available() { return true; },
     get voiceName() { return voice?.name ?? ""; },
@@ -2022,23 +2095,24 @@ function makeSpeech() {
       unlocked = true;
       try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); } catch {}
     },
-    cancel() { try { synth.cancel(); } catch {} finish(); },
+    cancel() { gen++; queue.length = 0; running = false; try { synth.cancel(); } catch {} finish(); },
     say(text: string, { delay = 0, rate = 0.86, pitch = 0.96, volume = 0.92 } = {}) {
       const line = String(text || "").trim();
       if (!line) return;
-      const go = () => {
-        try {
-          const u = new SpeechSynthesisUtterance(line);
-          if (voice) { u.voice = voice; u.lang = voice.lang; }
-          u.rate = rate; u.pitch = pitch; u.volume = volume;
-          u.onstart = () => { sawBoundary = false; onBusy?.(true); beat(); startKeepalive(); startFallback(); };
-          u.onboundary = () => { sawBoundary = true; beat(); };
-          u.onend = finish;
-          u.onerror = finish;
-          synth.speak(u);
-        } catch { finish(); }
+      const mine = gen;
+      const enqueue = () => {
+        if (mine !== gen) return;
+        queue.push({ parts: splitClauses(line), rate, pitch, volume });
+        if (running) return;
+        running = true;
+        // Busy is held across the whole queue, so the bed ducks once for the
+        // line and its question together rather than bobbing between them.
+        onBusy?.(true);
+        startKeepalive();
+        startFallback();
+        runNext(gen);
       };
-      if (delay > 0) setTimeout(go, delay); else go();
+      if (delay > 0) setTimeout(enqueue, delay); else enqueue();
     },
   };
 
@@ -5085,7 +5159,7 @@ export default function AetherCanvas() {
               <input
                 autoFocus
                 value={reply}
-                onChange={e=>setReply(e.target.value)}
+                onChange={e=>{ if(!reply&&e.target.value) speechRef.current?.cancel(); setReply(e.target.value); }}
                 onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();answerAsk(reply);}
                                 if(e.key==="Escape"){setAsk(null);setReply("");} }}
                 placeholder="answer, or let it be…"
@@ -5182,7 +5256,7 @@ export default function AetherCanvas() {
             value={thought}
             disabled={loading}
             rows={1}
-            onChange={e=>setThought(e.target.value)}
+            onChange={e=>{ if(!thought&&e.target.value) speechRef.current?.cancel(); setThought(e.target.value); }}
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();askNow();}}}
             onFocus={()=>setInputFocused(true)}
             onBlur={()=>setInputFocused(false)}
