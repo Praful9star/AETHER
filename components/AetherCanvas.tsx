@@ -1919,6 +1919,78 @@ function makeAudio() {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// ─── Aether's voice ─────────────────────────────────────────────────────────
+// Speaking the reply aloud rather than only printing it, because the calming
+// part of a voice is not what it says — it is the prosody. The middle ear's
+// muscles sit under vagal control and are tuned to human vocal frequencies, so
+// a slow, gently-pitched voice reaches the nervous system by a route text has
+// no access to. In the MIT/OpenAI trial, voice beat text at reducing loneliness
+// and problematic dependence.
+//
+// What it will NOT do is reassure. The same trial found the benefit only holds
+// at moderate use — heavy users came out lonelier and more dependent — and the
+// clinical literature is blunt that excessive reassurance-seeking is a safety
+// behaviour that *maintains* anxiety rather than relieving it. So Aether speaks
+// the line it already wrote and asks its one concrete question, and then stops.
+// It never says a soothing thing it was not asked for, and it cannot be drawn
+// into a conversation, because there is nothing here to converse with.
+function makeSpeech() {
+  if (typeof window === "undefined") return null;
+  const synth = (window as any).speechSynthesis as SpeechSynthesis | undefined;
+  if (!synth || typeof (window as any).SpeechSynthesisUtterance !== "function") return null;
+
+  // Voice quality varies enormously by platform, and the default is usually
+  // the worst one installed. Prefer the names the good neural voices ship
+  // under, then any local English voice, and keep well away from the novelty
+  // voices macOS still carries.
+  const GOOD = /natural|neural|premium|enhanced|google|samantha|serena|daniel|karen|moira|tessa|aria|jenny|libby/i;
+  const JUNK = /zarvox|trinoids|bubbles|bells|boing|jester|organ|cellos|wobble|whisper|bahh|albert|bad news|good news/i;
+  let voice: SpeechSynthesisVoice | null = null;
+
+  const pick = () => {
+    const all = synth.getVoices().filter(v => /^en/i.test(v.lang) && !JUNK.test(v.name));
+    if (!all.length) return;
+    voice = all.find(v => GOOD.test(v.name) && v.localService)
+         ?? all.find(v => GOOD.test(v.name))
+         ?? all.find(v => v.default)
+         ?? all[0];
+  };
+  pick();
+  // getVoices() is empty on first call in Chrome until this fires.
+  try { synth.addEventListener("voiceschanged", pick); } catch {}
+
+  let unlocked = false;
+  return {
+    // iOS refuses to speak unless the first utterance happened inside a real
+    // user gesture, and our speech starts after an async fetch, which breaks
+    // the chain. Burning one silent utterance on the sound toggle keeps it.
+    unlock() {
+      if (unlocked) return;
+      unlocked = true;
+      try {
+        const u = new SpeechSynthesisUtterance(" ");
+        u.volume = 0; synth.speak(u);
+      } catch {}
+    },
+    cancel() { try { synth.cancel(); } catch {} },
+    say(text: string, { delay = 0, rate = 0.86, pitch = 0.96, volume = 0.92 } = {}) {
+      const line = String(text || "").trim();
+      if (!line) return;
+      const go = () => {
+        try {
+          const u = new SpeechSynthesisUtterance(line);
+          if (voice) { u.voice = voice; u.lang = voice.lang; }
+          // Slower and slightly below natural pitch: the acoustic shape of a
+          // voice that is not in a hurry, which is the part that does the work.
+          u.rate = rate; u.pitch = pitch; u.volume = volume;
+          synth.speak(u);
+        } catch {}
+      };
+      if (delay > 0) setTimeout(go, delay); else go();
+    },
+  };
+}
+
 interface SavedStar {
   id: number;
   thought: string;
@@ -1952,6 +2024,7 @@ export default function AetherCanvas() {
   const lastActRef   = useRef(performance.now());
   const gyroRef      = useRef({ beta: 0, gamma: 0 });
   const voiceRef     = useRef<any>(null);
+  const speechRef    = useRef<ReturnType<typeof makeSpeech>>(null);
 
   const [thought,      setThought]      = useState("");
   const [whisper,      setWhisper]      = useState("I am Aether. Whisper a thought, and watch it become a galaxy.");
@@ -4325,6 +4398,7 @@ export default function AetherCanvas() {
       composer.dispose(); renderer.dispose();
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
+      speechRef.current?.cancel();
       audioRef.current?.dispose?.();
     };
   }, []);
@@ -4439,6 +4513,10 @@ export default function AetherCanvas() {
     setForm(fm); setAccentColor(pal[2]||"#b892ff"); lastEnergy.current=en;
     if (audioRef.current) audioRef.current.transition(fm,en);
     showMorphLabel(fm);
+    // Spoken only when sound is on — the same switch that governs everything
+    // else the app makes a noise with. Held back until the galaxy has settled
+    // so the voice arrives into quiet rather than over the morph.
+    if (sound) speechRef.current?.say(text,{delay:1500});
     if (save) {
       const id=Date.now();
       remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,
@@ -4448,10 +4526,15 @@ export default function AetherCanvas() {
       // question feel like a form field on a loading screen; arriving after it
       // lands makes it feel like the star asking.
       if (askTimer.current) clearTimeout(askTimer.current);
-      if (question) askTimer.current=setTimeout(()=>{ setReply(""); setAsk({id,q:question}); },3500);
+      if (question) askTimer.current=setTimeout(()=>{
+        setReply(""); setAsk({id,q:question});
+        // A beat after the line it follows, and a touch slower still: this is
+        // the only thing Aether asks, and it should not sound like a prompt.
+        if (sound) speechRef.current?.say(question,{delay:400,rate:0.82});
+      },3500);
     }
     setWhisper(text);
-  },[remember,showMorphLabel]);
+  },[remember,showMorphLabel,sound]);
 
   const fallback=useCallback((text:string)=>{
     const h=hashStr(text||"void");
@@ -4465,12 +4548,25 @@ export default function AetherCanvas() {
     const text=raw.trim();
     if (!text||loading) return;
     setLoading(true); setThought(""); burstRef.current=0.8;
+    // A new thought supersedes whatever Aether was still saying about the last
+    // one. Nothing talks over the thing you just wrote.
+    speechRef.current?.cancel();
     setFirstContact(false);
     try{localStorage.setItem("aether_visited","1");}catch{}
     lastActRef.current=performance.now();
     try{navigator.vibrate?.(25);}catch{}
     try {
-      const res=await fetch("/api/whisper",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thought:text})});
+      // Aether's memory, carried from this browser rather than a server: the
+      // handful of thoughts most likely to be the one coming back. The newest
+      // few, plus any older one that shares a real word with what was just
+      // written, so a thought returning after a month can still be recognised.
+      const prior=archiveRef.current;
+      const words=new Set(text.toLowerCase().match(/[a-z']{5,}/g)??[]);
+      const echoes=words.size
+        ? prior.slice(0,-4).filter(s=>(s.thought.toLowerCase().match(/[a-z']{5,}/g)??[]).some(w=>words.has(w)))
+        : [];
+      const recent=[...echoes.slice(-2),...prior.slice(-4)].map(s=>s.thought);
+      const res=await fetch("/api/whisper",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thought:text,recent})});
       if (!res.ok) throw new Error("api");
       const data=await res.json();
       const pal:string[]=Array.isArray(data.palette)&&data.palette.length>=3?data.palette.slice(0,3):FALLBACK_PALETTES[0];
@@ -4509,9 +4605,14 @@ export default function AetherCanvas() {
   const toggleSound=()=>{
     if (!audioRef.current) audioRef.current=makeAudio();
     if (!audioRef.current) return;
-    if (sound){audioRef.current.off();setSound(false);}
+    if (sound){audioRef.current.off();setSound(false);speechRef.current?.cancel();}
     else{
       audioRef.current.on();setSound(true);
+      // Built and unlocked here, inside the gesture, because iOS will not
+      // speak later otherwise — the utterance that matters arrives after a
+      // fetch, long past any gesture it could have inherited.
+      if (!speechRef.current) speechRef.current=makeSpeech();
+      speechRef.current?.unlock();
       sceneRef.current.getAudioLevel=()=>audioRef.current?.level()??0;
     }
   };
@@ -4524,6 +4625,7 @@ export default function AetherCanvas() {
     showMorphLabel(s.form); setPanel(false);
     // Becoming a past galaxy replaces the whole view — sky mode's wide,
     // held-still framing no longer makes sense once that happens.
+    speechRef.current?.cancel();
     if (skyModeRef.current) { setSkyMode(false); sceneRef.current.setSkyMode?.(false); }
     setSelectedStar(null);
   },[showMorphLabel]);
