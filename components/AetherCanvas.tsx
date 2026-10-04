@@ -1537,6 +1537,16 @@ function makeAudio() {
       duckGain.gain.linearRampToValueAtTime(0.32,t+0.1);
       duckGain.gain.linearRampToValueAtTime(1,t+0.6);
     },
+    // Held, for as long as Aether is speaking. Broadcast does this without
+    // thinking about it: the bed steps out of the way of a voice and walks
+    // back in afterwards. Down fast enough not to clip the first word, up
+    // slowly enough that the return is not itself an event.
+    duckHold(on:boolean) {
+      const t=ac.currentTime;
+      duckGain.gain.cancelScheduledValues(t);
+      duckGain.gain.setValueAtTime(duckGain.gain.value,t);
+      duckGain.gain.linearRampToValueAtTime(on?0.28:1, t+(on?0.22:1.1));
+    },
 
     // A well spawning: attract wells get a warm rising swell, repel wells
     // a sharp inverse-glide burst, so the two gestures read as opposites.
@@ -1940,39 +1950,79 @@ function makeSpeech() {
   if (!synth || typeof (window as any).SpeechSynthesisUtterance !== "function") return null;
 
   // Voice quality varies enormously by platform, and the default is usually
-  // the worst one installed. Prefer the names the good neural voices ship
-  // under, then any local English voice, and keep well away from the novelty
-  // voices macOS still carries.
-  const GOOD = /natural|neural|premium|enhanced|google|samantha|serena|daniel|karen|moira|tessa|aria|jenny|libby/i;
-  const JUNK = /zarvox|trinoids|bubbles|bells|boing|jester|organ|cellos|wobble|whisper|bahh|albert|bad news|good news/i;
+  // the worst one installed. Score rather than take the first regex hit, so a
+  // "Google UK English Female" beats a bare "Daniel" and a local neural voice
+  // beats a remote one — remote voices stall for a second on first use.
+  const GREAT = /natural|neural|premium|enhanced/i;
+  const GOOD  = /google|samantha|serena|daniel|karen|moira|tessa|aria|jenny|libby|siri/i;
+  const JUNK  = /zarvox|trinoids|bubbles|bells|boing|jester|organ|cellos|wobble|bahh|albert|bad news|good news|novelty|eloquence/i;
   let voice: SpeechSynthesisVoice | null = null;
 
   const pick = () => {
     const all = synth.getVoices().filter(v => /^en/i.test(v.lang) && !JUNK.test(v.name));
     if (!all.length) return;
-    voice = all.find(v => GOOD.test(v.name) && v.localService)
-         ?? all.find(v => GOOD.test(v.name))
-         ?? all.find(v => v.default)
-         ?? all[0];
+    const score = (v: SpeechSynthesisVoice) =>
+      (GREAT.test(v.name) ? 4 : 0) + (GOOD.test(v.name) ? 2 : 0) +
+      (v.localService ? 1 : 0) + (v.default ? 1 : 0);
+    voice = all.slice().sort((a, b) => score(b) - score(a))[0];
   };
   pick();
-  // getVoices() is empty on first call in Chrome until this fires.
   try { synth.addEventListener("voiceschanged", pick); } catch {}
 
-  let unlocked = false;
-  return {
-    // iOS refuses to speak unless the first utterance happened inside a real
-    // user gesture, and our speech starts after an async fetch, which breaks
-    // the chain. Burning one silent utterance on the sound toggle keeps it.
+  // The galaxy already pulses to its own soundscape through the analyser, but
+  // speech synthesis writes straight to the output device and never passes
+  // through the Web Audio graph, so the analyser is deaf to it. Word-boundary
+  // events give us the same information by another route: each word becomes a
+  // pulse, and the scene reads it exactly as it reads the music. The result is
+  // that the galaxy visibly breathes while Aether is speaking.
+  let pulseAt = 0, pulseAmp = 0, sawBoundary = false, fallback = 0;
+  const beat = () => { pulseAt = performance.now(); pulseAmp = 0.22; };
+
+  let unlocked = false, keepalive = 0;
+  let onBusy: ((busy: boolean) => void) | null = null;
+
+  const stopTimers = () => {
+    if (keepalive) { clearInterval(keepalive); keepalive = 0; }
+    if (fallback) { clearInterval(fallback); fallback = 0; }
+  };
+  const finish = () => { stopTimers(); pulseAmp = 0; onBusy?.(false); };
+
+  // Chrome silently stops synthesis after about fifteen seconds unless it is
+  // nudged. A whisper of twenty-six words at this rate runs close enough to
+  // that limit to be cut off mid-sentence.
+  const startKeepalive = () => {
+    stopTimers();
+    keepalive = window.setInterval(() => {
+      if (!synth.speaking) return;
+      try { synth.pause(); synth.resume(); } catch {}
+    }, 9000);
+  };
+
+  // Firefox and some mobile engines never fire boundary events. Rather than
+  // lose the visual entirely there, fall back to a steady pulse at a plausible
+  // speaking rate — only if no real boundary has arrived.
+  const startFallback = () => {
+    fallback = window.setInterval(() => {
+      if (!sawBoundary && synth.speaking) beat();
+    }, 280);
+  };
+
+  const api = {
+    get available() { return true; },
+    get voiceName() { return voice?.name ?? ""; },
+    // Read by the render loop, which already knows what to do with a level.
+    level() {
+      if (pulseAmp <= 0) return 0;
+      const age = performance.now() - pulseAt;
+      return pulseAmp * Math.exp(-age / 190);
+    },
+    onBusy(fn: (busy: boolean) => void) { onBusy = fn; },
     unlock() {
       if (unlocked) return;
       unlocked = true;
-      try {
-        const u = new SpeechSynthesisUtterance(" ");
-        u.volume = 0; synth.speak(u);
-      } catch {}
+      try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); } catch {}
     },
-    cancel() { try { synth.cancel(); } catch {} },
+    cancel() { try { synth.cancel(); } catch {} finish(); },
     say(text: string, { delay = 0, rate = 0.86, pitch = 0.96, volume = 0.92 } = {}) {
       const line = String(text || "").trim();
       if (!line) return;
@@ -1980,15 +2030,28 @@ function makeSpeech() {
         try {
           const u = new SpeechSynthesisUtterance(line);
           if (voice) { u.voice = voice; u.lang = voice.lang; }
-          // Slower and slightly below natural pitch: the acoustic shape of a
-          // voice that is not in a hurry, which is the part that does the work.
           u.rate = rate; u.pitch = pitch; u.volume = volume;
+          u.onstart = () => { sawBoundary = false; onBusy?.(true); beat(); startKeepalive(); startFallback(); };
+          u.onboundary = () => { sawBoundary = true; beat(); };
+          u.onend = finish;
+          u.onerror = finish;
           synth.speak(u);
-        } catch {}
+        } catch { finish(); }
       };
       if (delay > 0) setTimeout(go, delay); else go();
     },
   };
+
+  // A voice still talking to an empty room when the tab is hidden is the
+  // thing people most dislike about pages that speak.
+  try {
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { try { synth.pause(); } catch {} }
+      else if (synth.speaking) { try { synth.resume(); } catch {} }
+    });
+  } catch {}
+
+  return api;
 }
 
 interface SavedStar {
@@ -4516,7 +4579,14 @@ export default function AetherCanvas() {
     // Spoken only when sound is on — the same switch that governs everything
     // else the app makes a noise with. Held back until the galaxy has settled
     // so the voice arrives into quiet rather than over the morph.
-    if (sound) speechRef.current?.say(text,{delay:1500});
+    // Delivery follows the thought's own energy. A still, low-energy thought
+    // is read more slowly and a shade lower; a bright one is not hurried, just
+    // less becalmed. The range is deliberately narrow — the calming effect
+    // lives in a voice that is unhurried, so even the top of the range stays
+    // below conversational pace.
+    const sayRate=0.80+en*0.10;
+    const sayPitch=0.92+en*0.06;
+    if (sound) speechRef.current?.say(text,{delay:1500,rate:sayRate,pitch:sayPitch});
     if (save) {
       const id=Date.now();
       remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,
@@ -4530,7 +4600,7 @@ export default function AetherCanvas() {
         setReply(""); setAsk({id,q:question});
         // A beat after the line it follows, and a touch slower still: this is
         // the only thing Aether asks, and it should not sound like a prompt.
-        if (sound) speechRef.current?.say(question,{delay:400,rate:0.82});
+        if (sound) speechRef.current?.say(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
       },3500);
     }
     setWhisper(text);
@@ -4611,9 +4681,14 @@ export default function AetherCanvas() {
       // Built and unlocked here, inside the gesture, because iOS will not
       // speak later otherwise — the utterance that matters arrives after a
       // fetch, long past any gesture it could have inherited.
-      if (!speechRef.current) speechRef.current=makeSpeech();
+      if (!speechRef.current) {
+        speechRef.current=makeSpeech();
+        speechRef.current?.onBusy(busy=>audioRef.current?.duckHold?.(busy));
+      }
       speechRef.current?.unlock();
-      sceneRef.current.getAudioLevel=()=>audioRef.current?.level()??0;
+      sceneRef.current.getAudioLevel=()=>Math.max(
+        audioRef.current?.level()??0,
+        speechRef.current?.level()??0);
     }
   };
 
@@ -5289,6 +5364,24 @@ export default function AetherCanvas() {
                 <button onClick={()=>revisit(selectedStar)}
                   style={{flex:1,background:`linear-gradient(135deg,${a44},${a66}33)`,border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:"9px 12px",fontSize:9.5,letterSpacing:"0.16em",cursor:"pointer",fontFamily:"inherit"}}>
                   ✦ BECOME THIS GALAXY
+                </button>
+                {/* Hear it again. A spoken line is gone the moment it is
+                    finished, and the one time you most want it back is when
+                    you have returned to the star on purpose. Built lazily on
+                    this click, which is a real gesture and so can unlock
+                    speech on iOS where the first utterance otherwise cannot. */}
+                <button onClick={()=>{
+                    if (!speechRef.current) {
+                      speechRef.current=makeSpeech();
+                      speechRef.current?.onBusy(busy=>audioRef.current?.duckHold?.(busy));
+                      speechRef.current?.unlock();
+                    }
+                    speechRef.current?.cancel();
+                    speechRef.current?.say(selectedStar.whisper,{delay:120,rate:0.80+(selectedStar.energy??0.5)*0.10});
+                  }}
+                  aria-label="hear this whisper again"
+                  style={{background:"none",border:"1px solid rgba(200,196,235,.24)",color:"rgba(200,196,235,.72)",borderRadius:999,padding:"9px 14px",fontSize:9.5,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                  ⊳ HEAR
                 </button>
                 <button onClick={()=>setSelectedStar(null)}
                   style={{background:"none",border:"1px solid rgba(200,196,235,.24)",color:"rgba(200,196,235,.6)",borderRadius:999,padding:"9px 14px",fontSize:9.5,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"inherit"}}>
