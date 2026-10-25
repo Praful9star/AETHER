@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
+import { makeCloneVoice } from "@/lib/clone-voice";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
@@ -1212,6 +1213,44 @@ function makeAudio() {
   const sfxBus=ac.createGain(); sfxBus.gain.value=0.5;
   sfxBus.connect(master);
 
+  // ── Aether's own voice ──────────────────────────────────────────────
+  // speechSynthesis writes straight to the output device: it can never
+  // enter this graph, which is why the voice is the only sound in the
+  // product that is not spatial, and why the galaxy's pulse while it
+  // speaks has to be reconstructed from word-boundary events rather than
+  // measured. A voice that arrives as audio bytes has none of those
+  // limits — it is just another source.
+  //
+  // It is wired past `master` and `duckGain` deliberately. Those are what
+  // the bed is ducked with, and ducking the voice along with the thing we
+  // are ducking for would defeat the whole point. It still goes through
+  // the compressor, so it is glued to the mix rather than sitting on top
+  // of it, and it is fed to the analyser so the scene reads the real
+  // waveform.
+  //
+  // No reverb send, on purpose. Speech wants less room, not more: a dry
+  // voice against a reverberant bed is both more intelligible and reads
+  // as closer to you, which is the whole intent.
+  const voiceBus=ac.createGain(); voiceBus.gain.value=1;
+  voiceBus.connect(comp);
+  voiceBus.connect(analyser);
+  let voiceSrc:AudioBufferSourceNode|null=null;
+
+  const decode=(bytes:ArrayBuffer):Promise<AudioBuffer>=>
+    new Promise((resolve,reject)=>{
+      // decodeAudioData detaches the buffer it is given, so a retry or a
+      // second play of the same bytes would see an empty ArrayBuffer.
+      const copy=bytes.slice(0);
+      let settled=false;
+      const ok=(b:AudioBuffer)=>{ if(!settled){settled=true;resolve(b);} };
+      const bad=(e:any)=>{ if(!settled){settled=true;reject(e instanceof Error?e:new Error("decode failed"));} };
+      try {
+        // Safari still only has the callback form.
+        const r=(ac as any).decodeAudioData(copy,ok,bad);
+        if (r && typeof r.then==="function") r.then(ok,bad);
+      } catch(e) { bad(e); }
+    });
+
   const nBuf=ac.createBuffer(1,2*ac.sampleRate,ac.sampleRate);
   const nData=nBuf.getChannelData(0); for (let i=0;i<nData.length;i++) nData[i]=Math.random()*2-1;
   const nSrc=ac.createBufferSource(); nSrc.buffer=nBuf; nSrc.loop=true;
@@ -1547,6 +1586,41 @@ function makeAudio() {
       duckGain.gain.setValueAtTime(duckGain.gain.value,t);
       duckGain.gain.linearRampToValueAtTime(on?0.28:1, t+(on?0.22:1.1));
     },
+
+    // Play one line of synthesised voice through the graph. Resolves when the
+    // line has finished, so a caller can sequence a question behind an answer
+    // without guessing at durations — the thing the browser path has to
+    // approximate with timers.
+    //
+    // A position spatialises it: in sky mode the line about a star can
+    // genuinely arrive from that star. Without one it plays centred, which is
+    // right for the composer, where the galaxy fills the frame anyway.
+    async speakVoice(bytes:ArrayBuffer, opts:{pos?:[number,number,number]; gain?:number}={}) {
+      if (ac.state==="suspended") { try { await ac.resume(); } catch {} }
+      const buf=await decode(bytes);
+      try { voiceSrc?.stop(); } catch {}
+      const src=ac.createBufferSource(); src.buffer=buf;
+      const g=ac.createGain(); g.gain.value=opts.gain??1;
+      src.connect(g);
+      if (opts.pos && hasPannerNode) {
+        const p=ac.createPanner();
+        p.panningModel="HRTF"; p.distanceModel="inverse";
+        p.refDistance=45; p.maxDistance=400; p.rolloffFactor=0.9;
+        const [x,y,z]=opts.pos;
+        if ((p as any).positionX) { p.positionX.value=x; p.positionY.value=y; p.positionZ.value=z; }
+        else if (typeof (p as any).setPosition==="function") (p as any).setPosition(x,y,z);
+        g.connect(p); p.connect(voiceBus);
+      } else {
+        g.connect(voiceBus);
+      }
+      voiceSrc=src;
+      const done=new Promise<void>(resolve=>{ src.onended=()=>resolve(); });
+      src.start();
+      await done;
+      if (voiceSrc===src) voiceSrc=null;
+    },
+    stopVoice() { try { voiceSrc?.stop(); } catch {} voiceSrc=null; },
+    get voiceSpeaking() { return voiceSrc!==null; },
 
     // A well spawning: attract wells get a warm rising swell, repel wells
     // a sharp inverse-glide burst, so the two gestures read as opposites.
@@ -2162,6 +2236,7 @@ export default function AetherCanvas() {
   const gyroRef      = useRef({ beta: 0, gamma: 0 });
   const voiceRef     = useRef<any>(null);
   const speechRef    = useRef<ReturnType<typeof makeSpeech>>(null);
+  const cloneRef     = useRef<ReturnType<typeof makeCloneVoice>|null>(null);
 
   const [thought,      setThought]      = useState("");
   const [whisper,      setWhisper]      = useState("I am Aether. Whisper a thought, and watch it become a galaxy.");
@@ -4536,11 +4611,50 @@ export default function AetherCanvas() {
       if (el.parentNode) el.parentNode.removeChild(el);
       if (voiceRef.current) { try { voiceRef.current.stop(); } catch {} }
       speechRef.current?.cancel();
+      cloneRef.current?.cancel();
       audioRef.current?.dispose?.();
     };
   }, []);
 
   // ── React logic ─────────────────────────────────────────────────────────────
+
+  // Everything Aether says goes through here. It tries the cloned voice first
+  // and falls back to the browser's, and the two paths differ in more than
+  // quality: the cloned one is real audio in the graph, so it is spatial, the
+  // analyser sees it, and we know when it has actually finished. The browser
+  // path keeps the clause splitting, deceleration and rate/pitch shaping,
+  // because that is what makes it bearable.
+  //
+  // The fallback is silent by design. A deployment with no voice provider is
+  // the normal case today, and it should sound exactly like it does now.
+  const stopSaying=useCallback(()=>{
+    cloneRef.current?.cancel();
+    speechRef.current?.cancel();
+  },[]);
+
+  const sayLine=useCallback((text:string,
+      opts:{delay?:number; rate?:number; pitch?:number; pos?:[number,number,number]}={})=>{
+    const line=String(text||"").trim();
+    if (!line) return;
+    const { delay=0, rate=0.86, pitch=0.96, pos } = opts;
+    const browser=()=>speechRef.current?.say(line,{delay:0,rate,pitch});
+    const go=()=>{
+      const clone=cloneRef.current;
+      if (!clone?.possible) { browser(); return; }
+      // Ducking is held across the request too, not just the playback. The
+      // alternative is a bed at full level for however long synthesis takes
+      // and then an abrupt dip as the first word lands.
+      audioRef.current?.duckHold?.(true);
+      clone.speak(line,{pos}).then(spoke=>{
+        audioRef.current?.duckHold?.(false);
+        if (!spoke) browser();
+      }).catch(()=>{
+        audioRef.current?.duckHold?.(false);
+        browser();
+      });
+    };
+    if (delay>0) setTimeout(go,delay); else go();
+  },[]);
 
   const showMorphLabel=useCallback((fm:FormType)=>{
     const id=++morphCounter.current;
@@ -4660,7 +4774,7 @@ export default function AetherCanvas() {
     // below conversational pace.
     const sayRate=0.80+en*0.10;
     const sayPitch=0.92+en*0.06;
-    if (sound) speechRef.current?.say(text,{delay:1500,rate:sayRate,pitch:sayPitch});
+    if (sound) sayLine(text,{delay:1500,rate:sayRate,pitch:sayPitch});
     if (save) {
       const id=Date.now();
       remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,
@@ -4674,11 +4788,11 @@ export default function AetherCanvas() {
         setReply(""); setAsk({id,q:question});
         // A beat after the line it follows, and a touch slower still: this is
         // the only thing Aether asks, and it should not sound like a prompt.
-        if (sound) speechRef.current?.say(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
+        if (sound) sayLine(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
       },3500);
     }
     setWhisper(text);
-  },[remember,showMorphLabel,sound]);
+  },[remember,showMorphLabel,sound,sayLine]);
 
   const fallback=useCallback((text:string)=>{
     const h=hashStr(text||"void");
@@ -4749,7 +4863,7 @@ export default function AetherCanvas() {
   const toggleSound=()=>{
     if (!audioRef.current) audioRef.current=makeAudio();
     if (!audioRef.current) return;
-    if (sound){audioRef.current.off();setSound(false);speechRef.current?.cancel();}
+    if (sound){audioRef.current.off();setSound(false);stopSaying();}
     else{
       audioRef.current.on();setSound(true);
       // Built and unlocked here, inside the gesture, because iOS will not
@@ -4759,6 +4873,7 @@ export default function AetherCanvas() {
         speechRef.current=makeSpeech();
         speechRef.current?.onBusy(busy=>audioRef.current?.duckHold?.(busy));
       }
+      if (!cloneRef.current) cloneRef.current=makeCloneVoice(()=>audioRef.current);
       speechRef.current?.unlock();
       sceneRef.current.getAudioLevel=()=>Math.max(
         audioRef.current?.level()??0,
@@ -4774,7 +4889,7 @@ export default function AetherCanvas() {
     showMorphLabel(s.form); setPanel(false);
     // Becoming a past galaxy replaces the whole view — sky mode's wide,
     // held-still framing no longer makes sense once that happens.
-    speechRef.current?.cancel();
+    stopSaying();
     if (skyModeRef.current) { setSkyMode(false); sceneRef.current.setSkyMode?.(false); }
     setSelectedStar(null);
   },[showMorphLabel]);
@@ -5159,7 +5274,7 @@ export default function AetherCanvas() {
               <input
                 autoFocus
                 value={reply}
-                onChange={e=>{ if(!reply&&e.target.value) speechRef.current?.cancel(); setReply(e.target.value); }}
+                onChange={e=>{ if(!reply&&e.target.value) stopSaying(); setReply(e.target.value); }}
                 onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();answerAsk(reply);}
                                 if(e.key==="Escape"){setAsk(null);setReply("");} }}
                 placeholder="answer, or let it be…"
@@ -5256,7 +5371,7 @@ export default function AetherCanvas() {
             value={thought}
             disabled={loading}
             rows={1}
-            onChange={e=>{ if(!thought&&e.target.value) speechRef.current?.cancel(); setThought(e.target.value); }}
+            onChange={e=>{ if(!thought&&e.target.value) stopSaying(); setThought(e.target.value); }}
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();askNow();}}}
             onFocus={()=>setInputFocused(true)}
             onBlur={()=>setInputFocused(false)}
@@ -5450,8 +5565,17 @@ export default function AetherCanvas() {
                       speechRef.current?.onBusy(busy=>audioRef.current?.duckHold?.(busy));
                       speechRef.current?.unlock();
                     }
-                    speechRef.current?.cancel();
-                    speechRef.current?.say(selectedStar.whisper,{delay:120,rate:0.80+(selectedStar.energy??0.5)*0.10});
+                    if (!cloneRef.current) cloneRef.current=makeCloneVoice(()=>audioRef.current);
+                    stopSaying();
+                    // The one place a position is worth passing: you are
+                    // standing in your own sky looking at a particular star,
+                    // and with a cloned voice its line genuinely arrives from
+                    // where it is rather than from everywhere.
+                    sayLine(selectedStar.whisper,{
+                      delay:120,
+                      rate:0.80+(selectedStar.energy??0.5)*0.10,
+                      pos:selectedStar.pos,
+                    });
                   }}
                   aria-label="hear this whisper again"
                   style={{background:"none",border:"1px solid rgba(200,196,235,.24)",color:"rgba(200,196,235,.72)",borderRadius:999,padding:"9px 14px",fontSize:9.5,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
