@@ -5107,22 +5107,35 @@ export default function AetherCanvas() {
     } catch {}
   },[shareId,captureURL,whisper]);
 
-  const beginListening=useCallback(()=>{
+  // Which field the mic is filling. The composer had one from the start; the
+  // answer field did not, which meant the exchange could be heard but only
+  // typed back — half a conversation. "reply" is the other half.
+  const beginListening=useCallback((target:"thought"|"reply"="thought")=>{
     const SpeechRec=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;
     if (!SpeechRec) return;
     const rec=new SpeechRec();
-    rec.lang="en-US"; rec.continuous=false; rec.interimResults=false;
+    // Was hardcoded to en-US, which mishears an Indian speaker's own English
+    // for no reason — the same mistake the voice picker already corrects for
+    // on the way out. Match the listener, and fall back to en-US only if the
+    // browser claims a language we cannot use.
+    const lang=(typeof navigator!=="undefined"&&navigator.language)||"en-US";
+    rec.lang=/^en/i.test(lang)?lang:"en-US";
+    rec.continuous=false; rec.interimResults=false;
     rec.onresult=(e:any)=>{
       const transcript=e.results[0]?.[0]?.transcript||"";
-      if (transcript.trim()) { setThought(transcript); }
+      if (transcript.trim()) {
+        // Speaking is also a reason to stop being spoken to.
+        stopSaying();
+        if (target==="reply") setReply(transcript); else setThought(transcript);
+      }
       setVoiceActive(false);
     };
     rec.onerror=()=>setVoiceActive(false);
     rec.onend=()=>setVoiceActive(false);
     try{rec.start(); voiceRef.current=rec; setVoiceActive(true);}catch{setVoiceActive(false);}
-  },[]);
+  },[stopSaying]);
 
-  const toggleVoice=useCallback(()=>{
+  const toggleVoice=useCallback((target:"thought"|"reply"="thought")=>{
     if (!hasVoice) return;
     if (voiceActive) {
       try{voiceRef.current?.stop();}catch{}
@@ -5138,10 +5151,10 @@ export default function AetherCanvas() {
     if (!seen) {
       try{localStorage.setItem("aether_voice_seen","1");}catch{}
       setVoiceHint(true);
-      setTimeout(()=>{ setVoiceHint(false); beginListening(); },1700);
+      setTimeout(()=>{ setVoiceHint(false); beginListening(target); },1700);
       return;
     }
-    beginListening();
+    beginListening(target);
   },[hasVoice,voiceActive,beginListening]);
 
   const wakeFromSaver=useCallback(()=>{ lastActRef.current=performance.now(); setScreensaver(false); },[]);
@@ -5382,6 +5395,26 @@ export default function AetherCanvas() {
                 left on screen would invite one more thing that is not coming. */}
             {!ask.pending&&!ask.closing&&(
             <div style={{display:"flex",gap:8,alignItems:"center",width:"100%",maxWidth:520}}>
+              {/* The other half of a spoken exchange. Aether says its line
+                  aloud and asks aloud; answering it by typing in the dark at
+                  2am is the wrong gesture for what this is. */}
+              {hasVoice&&(
+                <button
+                  onClick={()=>toggleVoice("reply")}
+                  title={voiceActive?"Stop listening":"Speak your answer"}
+                  aria-label={voiceActive?"Stop listening":"Speak your answer"}
+                  style={{background:voiceActive?"rgba(255,80,80,0.2)":"rgba(14,10,28,.7)",
+                    backdropFilter:"blur(14px)",
+                    border:`1px solid ${voiceActive?"rgba(255,80,80,.55)":a44}`,
+                    color:voiceActive?"rgba(255,140,140,.9)":accentColor,
+                    borderRadius:999,width:40,height:40,flexShrink:0,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    cursor:"pointer",fontSize:14,
+                    boxShadow:voiceActive?"0 0 20px rgba(255,80,80,.3)":undefined,
+                    transition:"all 0.3s ease"}}>
+                  {voiceActive?"◉":"🎙"}
+                </button>
+              )}
               <input
                 autoFocus
                 value={reply}
@@ -5467,7 +5500,7 @@ export default function AetherCanvas() {
         <div style={{width:"100%",maxWidth:580,display:"flex",gap:8,alignItems:"center"}}>
           {hasVoice&&(
             <button
-              onClick={toggleVoice}
+              onClick={()=>toggleVoice("thought")}
               title={voiceActive?"Stop listening":"Speak your thought"}
               style={{
                 background:voiceActive?`rgba(255,80,80,0.2)`:`rgba(14,10,28,.65)`,
