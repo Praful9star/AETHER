@@ -4,6 +4,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
 import { makeCloneVoice } from "@/lib/clone-voice";
 import { MAX_TURNS, CLOSING_LINES, NEUTRAL_LINES, hashString as hashExch } from "@/lib/exchange";
+import { recededPos } from "@/lib/sky";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
@@ -3627,10 +3628,19 @@ export default function AetherCanvas() {
         birthTravelling=false;
         const n=Math.min(arr.length,CAP);
         syncLabels(arr.slice(0,n));
+        // Where each star actually sits now: its own direction, at the
+        // distance its age has moved it to. Computed once here, because this
+        // is the only place positions enter the scene — the points, the
+        // constellation edges, the labels and tap-to-select all read what
+        // this writes, so they stay in agreement for free. O(n) once per
+        // rebuild with n capped at 120, and nothing per frame.
+        const nowMs=Date.now();
+        const eff:[number,number,number][]=new Array(n);
+        for (let i=0;i<n;i++) eff[i]=recededPos(arr[i],nowMs);
         for (let i=0;i<CAP;i++) {
           if (i<n) {
             const s=arr[i];
-            memPos[i*3]=s.pos[0]; memPos[i*3+1]=s.pos[1]; memPos[i*3+2]=s.pos[2];
+            memPos[i*3]=eff[i][0]; memPos[i*3+1]=eff[i][1]; memPos[i*3+2]=eff[i][2];
             const rgb=hexToRGB(s.palette[2]);
             memCol[i*3]=rgb[0]; memCol[i*3+1]=rgb[1]; memCol[i*3+2]=rgb[2];
             memCored[i]=s.answer?1:0;
@@ -3667,7 +3677,7 @@ export default function AetherCanvas() {
         // same whether you have 3 stars or 120.
         memEdgesReady=false;
         if (n>=2) {
-          const pos=arr.slice(0,n).map(s=>s.pos);
+          const pos=eff;
           // Nearest-neighbour distances, kept only to get the median — the
           // sense of scale for "close" in this particular sky.
           const nearest=new Float32Array(n).fill(Infinity);
