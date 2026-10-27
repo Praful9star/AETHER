@@ -1,4 +1,5 @@
 import Groq from "groq-sdk";
+import { hashString, cleanQuestion, CONCRETE_QUESTIONS } from "@/lib/exchange";
 
 // Minimal in-memory rate limit — this endpoint had none at all, meaning any
 // caller (script, bot, or just an impatient tab) could spam an LLM call with
@@ -55,12 +56,6 @@ const FALLBACK_PALETTES: [string, string, string][] = [
   ["#050511", "#221166", "#aa88ff"],
 ];
 
-function hashString(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) >>> 0;
-  return h;
-}
-
 // One line was returned for every failed call, so when the AI was down each
 // thought came back word-for-word identical while the palette and form kept
 // changing — the galaxy looked alive and the words gave it away. A pool
@@ -102,41 +97,8 @@ const FALLBACK_WHISPERS = [
 // that way?" is pushing on the exact mechanism it claims to relieve.
 //
 // So the model is allowed to write the question, but it does not get the final
-// say. Anything abstract is thrown away and replaced.
-const CONCRETE_QUESTIONS = [
-  "What happened in the minute before?",
-  "Where were you when it started?",
-  "What was the first sign?",
-  "Who else was there?",
-  "What time of day was it?",
-  "What did you do immediately after?",
-  "What would you have to see for this to be over?",
-  "What is the smallest part of this that is actually true?",
-  "When did you last notice it not happening?",
-  "What were your hands doing?",
-  "What was the last thing said out loud?",
-  "Which part of it happened first?",
-];
-
-// Openings that mark the abstract mode, whatever follows them.
-const BANNED_OPENINGS = [
-  "why", "what does that say", "what does this say", "what do you think it means",
-  "how do you feel about", "what does it mean", "how does that make you feel",
-];
-
-function cleanQuestion(raw: unknown, thought: string): string {
-  const fallback = CONCRETE_QUESTIONS[hashString("q" + thought) % CONCRETE_QUESTIONS.length];
-  if (typeof raw !== "string") return fallback;
-  const q = raw.trim().replace(/\s+/g, " ");
-  // One sentence, actually a question, short enough to read in a glance.
-  if (q.length < 8 || q.length > 90) return fallback;
-  if (!q.endsWith("?")) return fallback;
-  if ((q.match(/\?/g) ?? []).length > 1) return fallback;
-  const low = q.toLowerCase();
-  if (BANNED_OPENINGS.some(b => low.startsWith(b) || low.includes(" " + b))) return fallback;
-  return q;
-}
-
+// say. Anything abstract is thrown away and replaced. The guards themselves
+// live in lib/exchange.ts, because /api/reply needs exactly the same ones.
 function buildFallback(thought: string) {
   const h = hashString(thought);
   return {

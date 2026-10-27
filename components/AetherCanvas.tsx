@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
 import { makeCloneVoice } from "@/lib/clone-voice";
+import { MAX_TURNS, CLOSING_LINES, NEUTRAL_LINES, hashString as hashExch } from "@/lib/exchange";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
@@ -2215,6 +2216,17 @@ interface SavedStar {
   // so every star saved before this existed still loads unchanged.
   question?: string;
   answer?: string;
+  // Turns beyond the first. The first question and answer stay where they
+  // were, because `answer` is what lights the core and a star written before
+  // this existed must keep reading as answered.
+  turns?: { q: string; a: string }[];
+}
+
+/** Every question and answer on a star, oldest first. */
+function transcriptOf(s: SavedStar | undefined | null): { q: string; a: string }[] {
+  if (!s) return [];
+  const first = s.question && s.answer ? [{ q: s.question, a: s.answer }] : [];
+  return [...first, ...(s.turns ?? [])];
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -2282,9 +2294,14 @@ export default function AetherCanvas() {
   // happens and then the field closes. An app that keeps asking is a chat
   // window, and a chat window wants your whole evening.
   const [confirmForget,setConfirmForget]= useState<number|null>(null);
-  const [ask,          setAsk]          = useState<{id:number;q:string}|null>(null);
+  // The exchange, as the UI sees it. `turn` is which question this is, so the
+  // panel knows whether another can follow; `line` is what Aether said back to
+  // the previous answer; `pending` is the wait on /api/reply; `closing` means
+  // this is the last thing said and there is nothing to type.
+  const [ask,          setAsk]          = useState<{id:number;q:string;turn:number;line?:string;pending?:boolean;closing?:boolean}|null>(null);
   const [reply,        setReply]        = useState("");
   const askTimer      = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const closeTimer    = useRef<ReturnType<typeof setTimeout>|null>(null);
   const skyModeRef = useRef(false);
   useEffect(()=>{ skyModeRef.current=skyMode; },[skyMode]);
   // Carried into the imperative render loop so the targeting reticle can
@@ -2293,7 +2310,10 @@ export default function AetherCanvas() {
   const selectedIdRef = useRef<number|null>(null);
   useEffect(()=>{ selectedIdRef.current=selectedStar?.id??null; },[selectedStar]);
   useEffect(()=>()=>{ if (starBornTimer.current) clearTimeout(starBornTimer.current); },[]);
-  useEffect(()=>()=>{ if (askTimer.current) clearTimeout(askTimer.current); },[]);
+  useEffect(()=>()=>{
+    if (askTimer.current) clearTimeout(askTimer.current);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  },[]);
 
   // ── Three.js setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -4785,7 +4805,7 @@ export default function AetherCanvas() {
       // lands makes it feel like the star asking.
       if (askTimer.current) clearTimeout(askTimer.current);
       if (question) askTimer.current=setTimeout(()=>{
-        setReply(""); setAsk({id,q:question});
+        setReply(""); setAsk({id,q:question,turn:1});
         // A beat after the line it follows, and a touch slower still: this is
         // the only thing Aether asks, and it should not sound like a prompt.
         if (sound) sayLine(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
@@ -4837,13 +4857,28 @@ export default function AetherCanvas() {
 
   const askNow=useCallback(()=>release(thought),[release,thought]);
 
-  // Turn three. The answer is not sent anywhere to be replied to — it is
-  // attached to the star, and the star changes. That is the whole exchange.
+  // Turn three, and now turns four and five.
+  //
+  // The answer is attached to the star first, and that part never depends on
+  // the network: whatever happens next, what you said is kept and the core is
+  // lit. Only then does Aether answer it, which is the two-way half the review
+  // asked for — bounded at MAX_TURNS, because an exchange that ends is the
+  // design rather than a limitation of it.
   const answerAsk=useCallback((raw:string)=>{
     const text=raw.trim();
-    if (!text||!ask) return;
-    const id=ask.id;
-    const withAnswer=(s:SavedStar)=>s.id===id?{...s,answer:text.slice(0,300)}:s;
+    if (!text||!ask||ask.pending||ask.closing) return;
+    const id=ask.id, q=ask.q, turn=ask.turn;
+    const answer=text.slice(0,300);
+
+    // Turn one goes in `answer`, which is what lights the core; later turns
+    // append, so a star written before any of this existed still reads as
+    // answered and still has a lit core.
+    const withAnswer=(s:SavedStar)=>{
+      if (s.id!==id) return s;
+      return turn<=1
+        ? {...s,answer}
+        : {...s,turns:[...(s.turns??[]),{q,a:answer}]};
+    };
     archiveRef.current=archiveRef.current.map(withAnswer);
     starsRef.current=starsRef.current.map(withAnswer);
     const idx=starsRef.current.findIndex(s=>s.id===id);
@@ -4856,9 +4891,45 @@ export default function AetherCanvas() {
     setList([...starsRef.current].reverse());
     setSelectedStar(s=>s&&s.id===id?withAnswer(s):s);
     try { localStorage.setItem("aether_stars",JSON.stringify(archiveRef.current)); } catch {}
-    setAsk(null); setReply("");
+    setReply("");
     try{navigator.vibrate?.(18);}catch{}
-  },[ask]);
+
+    const star=starsRef.current.find(s=>s.id===id)??archiveRef.current.find(s=>s.id===id);
+    const turns=transcriptOf(star);
+    setAsk(a=>a&&a.id===id?{...a,pending:true}:a);
+
+    // A closing line still comes from the server, because the exchange ending
+    // well matters as much as it continuing. Everything here fails into a
+    // local line rather than into a panel that just hangs.
+    const seed=(star?.thought??"")+"|"+turns.map(t=>t.a).join("|");
+    const land=(line:string,question:string|null)=>{
+      if (sound&&line) sayLine(line,{delay:260});
+      if (question) {
+        setAsk(a=>a&&a.id===id?{id,q:question,turn:turns.length+1,line}:a);
+      } else {
+        setAsk(a=>a&&a.id===id?{id,q:"",turn:turns.length,line,closing:true}:a);
+        if (closeTimer.current) clearTimeout(closeTimer.current);
+        closeTimer.current=setTimeout(()=>setAsk(a=>a&&a.id===id?null:a),7000);
+      }
+    };
+
+    fetch("/api/reply",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({thought:star?.thought??"",turns}),
+    })
+      .then(r=>r.ok?r.json():Promise.reject(new Error(String(r.status))))
+      .then(d=>land(
+        typeof d?.line==="string"&&d.line.trim()?d.line.trim():CLOSING_LINES[hashExch("c"+seed)%CLOSING_LINES.length],
+        typeof d?.question==="string"&&d.question.trim().length>6&&turns.length<MAX_TURNS?d.question.trim():null,
+      ))
+      .catch(()=>land(
+        turns.length<MAX_TURNS
+          ? NEUTRAL_LINES[hashExch("l"+seed)%NEUTRAL_LINES.length]
+          : CLOSING_LINES[hashExch("c"+seed)%CLOSING_LINES.length],
+        null,
+      ));
+  },[ask,sound,sayLine]);
 
   const toggleSound=()=>{
     if (!audioRef.current) audioRef.current=makeAudio();
@@ -5261,15 +5332,45 @@ export default function AetherCanvas() {
             style={{position:"absolute",left:0,right:0,bottom:104,display:"flex",flexDirection:"column",
               alignItems:"center",gap:11,padding:"0 18px",zIndex:4}}
           >
-            <div style={{display:"flex",alignItems:"center",gap:9,maxWidth:560}}>
-              <span style={{width:5,height:5,borderRadius:5,background:accentColor,
-                boxShadow:`0 0 9px ${accentColor}`,flexShrink:0}}/>
-              <span style={{color:"rgba(232,228,255,.9)",fontSize:14.5,lineHeight:1.45,
-                fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",
-                textShadow:"0 1px 10px rgba(0,0,0,.85)"}}>
-                {ask.q}
-              </span>
-            </div>
+            {/* What Aether said back to the previous answer. Upright rather
+                than italic, so the thing it says and the thing it asks are
+                never mistaken for each other. */}
+            {ask.line&&(
+              <div style={{display:"flex",alignItems:"flex-start",gap:9,maxWidth:560}}>
+                <span style={{width:5,height:5,borderRadius:5,marginTop:7,background:"rgba(200,196,235,.5)",flexShrink:0}}/>
+                <span style={{color:"rgba(214,210,240,.8)",fontSize:13.5,lineHeight:1.5,
+                  fontFamily:"var(--font-serif), Georgia, serif",
+                  textShadow:"0 1px 10px rgba(0,0,0,.85)"}}>
+                  {ask.line}
+                </span>
+              </div>
+            )}
+            {ask.q&&(
+              <div style={{display:"flex",alignItems:"center",gap:9,maxWidth:560}}>
+                <span style={{width:5,height:5,borderRadius:5,background:accentColor,
+                  boxShadow:`0 0 9px ${accentColor}`,flexShrink:0}}/>
+                <span style={{color:"rgba(232,228,255,.9)",fontSize:14.5,lineHeight:1.45,
+                  fontFamily:"var(--font-serif), Georgia, serif",fontStyle:"italic",
+                  textShadow:"0 1px 10px rgba(0,0,0,.85)"}}>
+                  {ask.q}
+                </span>
+              </div>
+            )}
+            {/* While Aether is answering. Three dots and nothing else: a
+                spinner would make this feel like a page loading rather than
+                somebody thinking about what you said. */}
+            {ask.pending&&(
+              <motion.div
+                initial={{opacity:0}} animate={{opacity:[0.3,0.85,0.3]}}
+                transition={{duration:1.9,repeat:Infinity,ease:"easeInOut"}}
+                style={{color:"rgba(200,196,235,.6)",fontSize:16,letterSpacing:"0.5em",lineHeight:1}}
+                aria-label="Aether is answering">
+                · · ·
+              </motion.div>
+            )}
+            {/* No input on the closing turn. The exchange is over, and a field
+                left on screen would invite one more thing that is not coming. */}
+            {!ask.pending&&!ask.closing&&(
             <div style={{display:"flex",gap:8,alignItems:"center",width:"100%",maxWidth:520}}>
               <input
                 autoFocus
@@ -5277,7 +5378,7 @@ export default function AetherCanvas() {
                 onChange={e=>{ if(!reply&&e.target.value) stopSaying(); setReply(e.target.value); }}
                 onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();answerAsk(reply);}
                                 if(e.key==="Escape"){setAsk(null);setReply("");} }}
-                placeholder="answer, or let it be…"
+                placeholder={ask.turn>1?"and then…":"answer, or let it be…"}
                 style={{flex:1,background:"rgba(14,10,28,.7)",backdropFilter:"blur(14px)",
                   border:`1px solid ${a44}`,borderRadius:999,color:"#eee9ff",fontSize:13.5,
                   padding:"11px 18px",fontFamily:"var(--font-serif), Georgia, serif",
@@ -5297,6 +5398,15 @@ export default function AetherCanvas() {
                 ✕
               </button>
             </div>
+            )}
+            {/* How much is left, once there is more than one turn behind you.
+                Knowing the exchange ends is part of what makes it safe to be
+                honest inside it. */}
+            {ask.turn>1&&!ask.pending&&(
+              <div style={{color:"rgba(200,196,235,.32)",fontSize:9.5,letterSpacing:"0.18em"}}>
+                {ask.closing?"THE EXCHANGE IS CLOSED":`${ask.turn} OF ${MAX_TURNS}`}
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
