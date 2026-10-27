@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { makeCloneVoice } from "@/lib/clone-voice";
 import { MAX_TURNS, CLOSING_LINES, NEUTRAL_LINES, hashString as hashExch } from "@/lib/exchange";
 import { recededPos } from "@/lib/sky";
+import { recordClip, canRecord, clipSize } from "@/lib/clip";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
@@ -1688,6 +1689,12 @@ function makeAudio() {
       return s/(aData.length*255);
     },
 
+    // The post-compressor output, for recording a clip with its own score.
+    // Tapped rather than re-routed: the speakers keep their signal and the
+    // recorder gets a parallel copy, which is the only arrangement where
+    // pressing record cannot change what the person in the room hears.
+    recordTap():AudioNode { return makeup; },
+
     // The melodic line runs on an interval rather than a self-rescheduling
     // timeout, so it needs stopping. The context outlives every route in
     // practice, but a scheduler that cannot be switched off is a leak
@@ -2261,6 +2268,16 @@ export default function AetherCanvas() {
   const [sound,        setSound]        = useState(false);
   const [panel,        setPanel]        = useState(false);
   const [captureURL,   setCaptureURL]   = useState<string|null>(null);
+  // Recording a clip. `clip` holds the finished file so it can be previewed
+  // before it is saved — nobody should have to download a video to find out
+  // whether it is the one they wanted.
+  const [canClip,      setCanClip]      = useState(false);
+  const [clipping,     setClipping]     = useState(false);
+  const [clipPct,      setClipPct]      = useState(0);
+  const [clip,         setClip]         = useState<{url:string;ext:string;note:string}|null>(null);
+  const [clipError,    setClipError]    = useState<string|null>(null);
+  const clipCancel  = useRef(false);
+  const lastPct     = useRef(0);
   const [list,         setList]         = useState<SavedStar[]>([]);
   const [inputFocused, setInputFocused] = useState(false);
   // The composer sits between the mic and RELEASE, so on a phone it gets
@@ -2425,6 +2442,10 @@ export default function AetherCanvas() {
     // imperative Three.js scene this size (re-verifying partial in-place
     // resource restoration is out of scope and riskier than a clean reload).
     let ctxLost=false;
+    // True only between clipBegin() and clipEnd(). One boolean test per frame
+    // is the entire cost of this feature when nobody is recording.
+    let renderPaused=false;
+    let clipRestoreW=0, clipRestoreH=0, clipRestoreDPR=1;
     const onContextLost=(e:Event)=>{ e.preventDefault(); ctxLost=true; };
     const onContextRestored=()=>{ window.location.reload(); };
     renderer.domElement.addEventListener("webglcontextlost",onContextLost,false);
@@ -3773,6 +3794,37 @@ export default function AetherCanvas() {
           }
         }
       },
+      // ── Recording a clip ──────────────────────────────────────────────
+      // Same trick snapshot() uses, held open across many frames instead of
+      // one: point the renderer at the clip's aspect, let the export drive
+      // it, then put everything back. The live render is paused for the
+      // duration so no frame is ever drawn twice.
+      clipBegin(w:number,h:number) {
+        clipRestoreW=mount.clientWidth; clipRestoreH=mount.clientHeight;
+        clipRestoreDPR=renderer.getPixelRatio();
+        renderPaused=true;
+        // setSize multiplies by the pixel ratio, so asking for 1080x1920 on a
+        // 2x phone would really render 2160x3840 — four times the pixels, for
+        // a clip that is already far sharper than anything it will be watched
+        // on. Pin it to 1 for the recording and give it back afterwards.
+        renderer.setPixelRatio(1); composer.setPixelRatio(1);
+        renderer.setSize(w,h); composer.setSize(w,h);
+        camera.aspect=w/h; camera.updateProjectionMatrix();
+        memLineMat.resolution.set(w,h);
+      },
+      clipRender():HTMLCanvasElement {
+        composer.render();
+        return renderer.domElement;
+      },
+      clipEnd() {
+        const W=clipRestoreW||mount.clientWidth, H=clipRestoreH||mount.clientHeight;
+        renderer.setPixelRatio(clipRestoreDPR); composer.setPixelRatio(clipRestoreDPR);
+        renderer.setSize(W,H); composer.setSize(W,H);
+        camera.aspect=W/H; camera.updateProjectionMatrix();
+        memLineMat.resolution.set(W,H);
+        renderPaused=false;
+        composer.render();
+      },
       snapshot(whisperText:string) {
         const W=mount.clientWidth,H=mount.clientHeight;
         renderer.setSize(1080,1920); composer.setSize(1080,1920);
@@ -4600,11 +4652,22 @@ export default function AetherCanvas() {
       meteorMat.opacity=anyMeteor?0.75:0;
       meteorGeo.attributes.position.needsUpdate=true;
 
-      composer.render();
+      // Paused only while a clip is being recorded, when the export drives
+      // the renderer itself at the clip's own size and cadence. Rendering
+      // here too would mean every frame drawn twice — once for a screen
+      // nobody is looking at behind the export overlay, and once for the
+      // clip — which is exactly the kind of doubled work that made the
+      // multisampling commit lag. Everything above still runs, so the galaxy
+      // keeps moving and the clip is of a living scene.
+      if (!renderPaused) composer.render();
     };
     loop();
 
     setTimeout(()=>setShow(true),350);
+
+    // A button that cannot work should not be on screen at all, so this is
+    // feature-detected rather than tried and caught.
+    setCanClip(canRecord());
 
     // Voice recognition availability check
     if (typeof window!=="undefined"&&("SpeechRecognition" in window||"webkitSpeechRecognition" in window)) {
@@ -4998,6 +5061,70 @@ export default function AetherCanvas() {
 
   const capture=()=>{ try{setCaptureURL(sceneRef.current.snapshot?.(whisper)??null);}catch{} };
 
+  // Record the galaxy as a short vertical film.
+  //
+  // The whole exchange is here rather than in lib/clip.ts because this is the
+  // part that touches the scene: the renderer is handed over for the duration
+  // and must be given back whatever happens, including if the recorder throws
+  // halfway through — a scene left at 1080x1920 with its live render paused is
+  // a black page.
+  const makeClip=useCallback(async ()=>{
+    if (clipping||!canClip||!sceneRef.current.clipBegin) return;
+    const line=(whisper||"").trim();
+    if (!line) return;
+    // Nothing should still be talking over the clip's own soundtrack.
+    stopSaying();
+    const { width, height } = clipSize(window.innerWidth);
+    const audio=audioRef.current;
+    const withSound = sound && audio?.ac && typeof (audio as any).recordTap==="function"
+      ? { ac: audio.ac, from: (audio as any).recordTap() as AudioNode }
+      : null;
+
+    clipCancel.current=false;
+    setClipping(true); setClipPct(0); setClipError(null);
+    if (clip) { try{URL.revokeObjectURL(clip.url);}catch{} setClip(null); }
+    try {
+      sceneRef.current.clipBegin(width,height);
+      const res=await recordClip({
+        width, height, fps:30, seconds:8,
+        whisper:line,
+        form:FORM_LABELS[form]||form,
+        renderFrame:()=>sceneRef.current.clipRender?.(),
+        audio:withSound,
+        // Throttled on purpose. Called every frame, this sets React state
+        // thirty times a second, and a re-render of this component is not
+        // cheap — the clip is composited on the same thread, so the progress
+        // bar would be stealing time from the thing it is reporting on. Five
+        // updates a second is smooth to look at and costs nothing.
+        onProgress:p=>{
+          const now=performance.now();
+          if (p>=1||now-lastPct.current>200) { lastPct.current=now; setClipPct(p); }
+        },
+        cancelled:()=>clipCancel.current,
+      });
+      if (clipCancel.current) return;
+      // Report what actually happened rather than what was intended. If a
+      // device could not keep up, the numbers say so instead of the clip
+      // quietly being half the length.
+      const note=`${res.frames} frames in ${res.elapsedSec.toFixed(1)}s [${res.brokeOn}] · ${res.achievedFps.toFixed(1)} fps · `
+        +`${res.avgFrameMs.toFixed(1)}ms avg, ${res.worstFrameMs.toFixed(0)}ms worst`
+        +(withSound?" · with sound":" · silent (turn sound on for audio)")
+        +(res.meanLuma===0?" · WARNING: picture came back black":"");
+      setClip({url:URL.createObjectURL(res.blob),ext:res.ext,note});
+    } catch (e) {
+      // Say so. A recorder can fail asynchronously on a browser that claimed
+      // to support the format, and silence here means somebody taps the
+      // button twice and concludes the whole feature is broken.
+      setClip(null);
+      setClipError(e instanceof Error?e.message:"recording failed");
+    } finally {
+      // Unconditional: this is the line that keeps a failed recording from
+      // leaving a dead page behind.
+      try { sceneRef.current.clipEnd?.(); } catch {}
+      setClipping(false); setClipPct(0);
+    }
+  },[clipping,canClip,whisper,sound,form,clip,stopSaying]);
+
   // "Week in Stars" — shareable recap card drawn from your constellation
   const weekCard=useCallback(()=>{
     const stars=starsRef.current;
@@ -5299,6 +5426,7 @@ export default function AetherCanvas() {
           ["EXPLORE · "+FORMS.length,()=>setExplore(e=>!e)],
           ["ZEN MODE",()=>setZen(true)],
           ["CAPTURE ✦",capture],
+          ...(canClip&&whisper?[[clipping?`RECORDING · ${Math.round(clipPct*100)}%`:"RECORD CLIP ✦",makeClip] as [string,()=>void]]:[]),
         ] as [string,()=>void][]).map(([label,fn])=>(
           <button key={label} onClick={fn}
             style={{display:"block",background:"none",border:"none",color:skyMode&&label.includes("EXIT")?accentColor:"rgba(214,210,245,.6)",fontSize:10,letterSpacing:"0.2em",padding:"5px 0",cursor:"pointer",textAlign:"right",fontFamily:"inherit"}}>
@@ -5746,6 +5874,90 @@ export default function AetherCanvas() {
 
       {/* Capture overlay */}
       <AnimatePresence>
+        {/* Recording. The canvas behind this is paused and mid-resize, so it
+            is covered rather than left showing — and the progress is real,
+            counted off captured frames. */}
+        {clipping&&(
+          <motion.div
+            initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+            style={{position:"fixed",inset:0,zIndex:40,background:"rgba(4,2,10,.93)",
+              backdropFilter:"blur(10px)",display:"flex",flexDirection:"column",
+              alignItems:"center",justifyContent:"center",gap:22}}>
+            <div style={{color:"rgba(232,228,255,.9)",fontSize:11,letterSpacing:"0.32em"}}>
+              RECORDING YOUR SKY
+            </div>
+            <div style={{width:260,height:2,background:"rgba(150,130,230,.18)",borderRadius:2,overflow:"hidden"}}>
+              <div style={{width:`${Math.round(clipPct*100)}%`,height:"100%",
+                background:`linear-gradient(90deg,${a66},${accentColor})`,
+                boxShadow:`0 0 12px ${accentColor}`,transition:"width .12s linear"}}/>
+            </div>
+            <div style={{color:"rgba(200,196,235,.45)",fontSize:10,letterSpacing:"0.2em"}}>
+              {Math.round(clipPct*100)}%  ·  8 SECONDS
+            </div>
+            <button onClick={()=>{clipCancel.current=true;}}
+              style={{marginTop:6,background:"none",border:"1px solid rgba(200,196,235,.22)",
+                color:"rgba(200,196,235,.6)",borderRadius:999,padding:"8px 18px",
+                fontSize:9.5,letterSpacing:"0.2em",cursor:"pointer",fontFamily:"inherit"}}>
+              CANCEL
+            </button>
+          </motion.div>
+        )}
+
+        {clipError&&!clipping&&(
+          <motion.div
+            initial={{opacity:0}} animate={{opacity:1}}
+            style={{position:"fixed",left:0,right:0,bottom:118,zIndex:41,display:"flex",
+              justifyContent:"center",padding:"0 20px"}}>
+            <div style={{maxWidth:420,background:"rgba(26,8,16,.92)",backdropFilter:"blur(12px)",
+              border:"1px solid rgba(255,120,140,.3)",borderRadius:14,padding:"12px 16px",
+              display:"flex",flexDirection:"column",gap:7}}>
+              <div style={{color:"rgba(255,170,185,.9)",fontSize:10,letterSpacing:"0.2em"}}>
+                COULD NOT RECORD
+              </div>
+              <div style={{color:"rgba(230,220,235,.72)",fontSize:11.5,lineHeight:1.45}}>
+                {clipError}
+              </div>
+              <button onClick={()=>setClipError(null)}
+                style={{alignSelf:"flex-start",background:"none",border:"none",
+                  color:"rgba(200,196,235,.5)",fontSize:9.5,letterSpacing:"0.2em",
+                  cursor:"pointer",padding:0,fontFamily:"inherit"}}>
+                DISMISS
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {/* The finished clip, playable before it is saved. */}
+        {clip&&!clipping&&(
+          <motion.div
+            initial={{opacity:0}} animate={{opacity:1}}
+            style={{position:"fixed",inset:0,zIndex:41,background:"rgba(4,2,10,.95)",
+              backdropFilter:"blur(14px)",display:"flex",flexDirection:"column",
+              alignItems:"center",justifyContent:"center",gap:14,padding:18}}>
+            <video src={clip.url} controls autoPlay loop playsInline
+              style={{maxHeight:"68vh",maxWidth:"90vw",borderRadius:14,
+                boxShadow:`0 0 80px ${a44}`,background:"#000"}}/>
+            <div style={{color:"rgba(200,196,235,.4)",fontSize:9,letterSpacing:"0.14em",textAlign:"center"}}>
+              {clip.note}
+            </div>
+            <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",justifyContent:"center"}}>
+              <a href={clip.url} download={`aether-sky.${clip.ext}`}
+                style={{background:`linear-gradient(135deg, ${a44}, ${a88}22)`,
+                  border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,
+                  padding:"11px 22px",fontSize:10.5,letterSpacing:"0.2em",
+                  textDecoration:"none",fontFamily:"inherit"}}>
+                SAVE CLIP ✦
+              </a>
+              <button onClick={()=>{ try{URL.revokeObjectURL(clip.url);}catch{} setClip(null); }}
+                style={{background:"none",border:"1px solid rgba(200,196,235,.22)",
+                  color:"rgba(200,196,235,.6)",borderRadius:999,padding:"11px 20px",
+                  fontSize:10.5,letterSpacing:"0.2em",cursor:"pointer",fontFamily:"inherit"}}>
+                CLOSE
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {captureURL&&(
           <motion.div
             initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
