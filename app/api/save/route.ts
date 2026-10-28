@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { whispersDb } from "@/lib/supabase";
+import { callerFrom } from "@/lib/user";
 
 // Same 34-form taxonomy as app/api/whisper/route.ts. Duplicated rather than
 // imported (matching that file's own convention) since this route needs it
@@ -24,7 +25,13 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { thought, whisper, palette, form, energy, user_id, pos } = body;
+    // `user_id` is deliberately NOT read from the body. It used to be, which
+    // was harmless only for as long as there were no accounts: with real
+    // identities a caller could write rows into somebody else's sky by
+    // posting their uuid. Identity comes from the signed token or not at all.
+    const { thought, whisper, palette, form, energy, pos } = body;
+
+    const caller = await callerFrom(req);
 
     const supabase = db.client;
 
@@ -43,7 +50,10 @@ export async function POST(req: Request) {
       .from("whispers")
       .insert({
         id: uuidv4(),
-        user_id: String(user_id ?? "anon").slice(0, 64),
+        // 'anon' keeps the pre-accounts behaviour for anyone not signed in:
+        // the thought is still stored, and /api/stars will not serve it back
+        // to anybody, since isRealUserId rejects the placeholder.
+        user_id: caller?.userId ?? "anon",
         thought: String(thought ?? "").slice(0, 500),
         whisper: String(whisper ?? "").slice(0, 300),
         palette: validPalette,

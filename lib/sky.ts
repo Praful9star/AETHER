@@ -46,6 +46,53 @@ export function recedeRadius(s: Receding, now: number): number {
   return Math.max(RECEDE_NEAR-6,r);
 }
 
+// ── Two skies becoming one ──────────────────────────────────────────────────
+//
+// Until accounts existed there was only ever one copy of a sky: whatever was
+// in this browser's localStorage. Signing in produces a second, and they
+// overlap — the stored rows include everything written on this device while
+// signed in, so a naive concatenation doubles every one of them.
+//
+// Which copy wins matters. Local wins, deliberately: a local star carries the
+// answers and the exchange turns that pull it closer (recedeRadius reads
+// both), and the stored row is a snapshot taken at the moment the thought was
+// made, before any of that happened. Preferring the remote copy would quietly
+// throw away the record of which thoughts somebody returned to, which is the
+// single most meaningful thing the sky knows.
+
+export type Mergeable = {
+  id: number;
+  thought?: string;
+  whisper: string;
+};
+
+/** Same thought, same answer: the same star, wherever the copy came from. */
+function identity(s: Mergeable): string {
+  const norm = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
+  return norm(s.thought || "") + "\u0000" + norm(s.whisper || "");
+}
+
+/**
+ * Local first, then any remote star not already present, oldest to newest,
+ * capped from the newest end.
+ *
+ * Returns the local array unchanged when there is nothing to add, so a caller
+ * can compare by reference and skip rebuilding the scene — which costs a full
+ * geometry rebuild of every star in the sky.
+ */
+export function mergeStars<T extends Mergeable>(local: T[], remote: T[], cap = 120): T[] {
+  if (!remote.length) return local;
+  const seen = new Set(local.map(identity));
+  const extra = remote.filter((r) => {
+    const k = identity(r);
+    if (seen.has(k)) return false;
+    seen.add(k);   // a remote list can hold duplicates of its own
+    return true;
+  });
+  if (!extra.length) return local;
+  return [...local, ...extra].sort((a, b) => a.id - b.id).slice(-cap);
+}
+
 /** The direction starPos chose, at the distance time has moved it to. */
 export function recededPos(s: Receding, now: number): [number,number,number] {
   const len=Math.hypot(s.pos[0],s.pos[1],s.pos[2]);

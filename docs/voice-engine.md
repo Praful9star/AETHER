@@ -23,6 +23,94 @@ part of the product that costs nothing to run. It has two hard limits:
    that is not spatial, and why the galaxy's pulse during speech has to be
    *reconstructed* from word events rather than measured.
 
+## Route 0 — the user's own voice, with no provider at all
+
+Built and shipped. `lib/voice-engine.ts`, `lib/mic.ts`.
+
+The review asked for a recorded human voice the user could hear things in.
+Routes A and B below answer that by renting somebody's model to imitate a
+voice. There is a third answer that needs no model, no key and no GPU:
+
+**record the person saying their own thought, and play it back to them from
+the star it became, lower and slower than they said it.**
+
+This is not a cheaper substitute for cloning. For what Aether does it is
+closer to the point. The mechanism the product is built on is self-distancing
+— encountering your own experience from outside yourself — and a cloned voice
+reading a *new* sentence is an effect laid on top of that. Your own sentence
+returning to you from sixty units away *is* the mechanism, performed. It is
+the difference between being told something comforting and hearing yourself
+from the outside.
+
+### How it works
+
+`SpeechRecognition` gives us no audio — it opens the microphone itself, sends
+it away, and returns a string. So the microphone is recorded a second time in
+parallel with `getUserMedia` and a `MediaRecorder`.
+
+The playback is a real pitch and time shifter, because the browser has none:
+`playbackRate` moves pitch and duration together, and a thought played at
+0.8× is not deeper, it is slurred. So the recording is cut into 110ms grains,
+each played at a different rate than the rate they are spaced at, and
+cross-faded with a Hann window at 50% overlap (which sums to exactly 1, so
+there is no amplitude ripple). Spacing sets duration, playback rate sets
+pitch, and the two come apart.
+
+Then distance, built from three things that have to move together or it reads
+as an effect rather than as a place: a lowpass for air absorption (7.5kHz
+near, 1.6kHz far), a send into the same convolver the rest of the galaxy uses,
+and a short feedback delay that smears consonants the way a room does.
+
+### Distance is time, and now it is audible
+
+`lib/sky.ts` already recedes a star from 52 to 78 units over six months on a
+log curve. The voice ages on **exactly that curve and that constant** — a
+thought from today comes back almost as you said it; one from months ago comes
+back deeper, slower, duller and further off. If the two curves ever drift
+apart the sky contradicts itself: a star twice as far that does not sound
+twice as far.
+
+### What it costs, and what it does not need
+
+Nothing, and it works offline. It also sidesteps both constraints in "Two
+constraints that are not technical" below: there is no consent question,
+because it is the person's own recording of themselves, and no EU AI Act
+Article 50 disclosure duty, because nothing synthetic is generated.
+
+### How it is verified
+
+Measured rather than listened to. `voicetest/dsp.cjs` renders the real grain
+schedule in Chromium's Web Audio against a 220Hz tone and reads the output
+back: at −5 semitones it measures **164.8Hz, and the duration unchanged** —
+which is the whole claim. It also checks the overlapping windows sum flat
+rather than clipping, and that there are no gaps at any setting the app
+actually uses. `voicetest/engine.cjs` pins the arithmetic and the silence
+trimmer; `voicetest/echo.cjs` drives the real path in a browser with a fake
+microphone, stubbing only `SpeechRecognition`, which cannot run headless.
+
+One measurement error worth recording, because it nearly became a fix for a
+problem that did not exist: the first run reported dropouts at every setting
+that combined a pitch shift with a rate change. The cause was the harness
+measuring the first and last grain's fade-in and fade-out as if they were
+gaps. The interior was always clean. Confirming that before changing the
+engine took one extra test; adding grain jitter to "fix" it would have made
+the voice worse for no reason.
+
+### What it does not do
+
+It is not a substitute for Routes A and B, and does not close them.
+
+- The recording lives in memory for as long as the tab is open and nowhere
+  else: not uploaded, not written to disk. So a star from last week has no
+  voice. Persisting these to IndexedDB would fix it and is the obvious next
+  step, but it means writing recordings of somebody's voice to their disk,
+  which is a decision to take deliberately rather than as a side effect of
+  wanting a better demo.
+- It can only ever say the thing the person already said. Aether's own lines —
+  the whisper, the question — still need a synthetic voice, which is what the
+  routes below are for.
+- A typed thought has no recording, so most sessions never hear it.
+
 ## The finding that changed the plan
 
 The review assumed a recording and a training run. That is no longer how this

@@ -6,6 +6,15 @@ import { makeCloneVoice } from "@/lib/clone-voice";
 import { MAX_TURNS, CLOSING_LINES, NEUTRAL_LINES, hashString as hashExch } from "@/lib/exchange";
 import { recededPos } from "@/lib/sky";
 import { recordClip, canRecord, clipSize } from "@/lib/clip";
+import {
+  planGrains, hann, settingsForAge, lowpassForDistance, gainForDistance,
+  reverbForDistance, blurParams, findSpeechBounds, ECHO_MAX_SEC,
+  type ModSettings,
+} from "@/lib/voice-engine";
+import { captureVoice, micSupported, type Capture } from "@/lib/mic";
+import { authAvailable, currentAuth, onAuthChange, restoreFromLink, type Auth } from "@/lib/auth";
+import { mergeStars } from "@/lib/sky";
+import SignIn from "@/components/SignIn";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
@@ -1239,6 +1248,15 @@ function makeAudio() {
   voiceBus.connect(analyser);
   let voiceSrc:AudioBufferSourceNode|null=null;
 
+  // The own-voice echo schedules every grain at once, so stopping it means
+  // stopping all of them — including the ones that have not started yet.
+  let ownSrcs:AudioBufferSourceNode[]=[];
+  let ownUntil=0;
+  const stopOwn=()=>{
+    for (const s of ownSrcs) { try { s.stop(); } catch {} try { s.disconnect(); } catch {} }
+    ownSrcs=[]; ownUntil=0;
+  };
+
   const decode=(bytes:ArrayBuffer):Promise<AudioBuffer>=>
     new Promise((resolve,reject)=>{
       // decodeAudioData detaches the buffer it is given, so a retry or a
@@ -1624,6 +1642,132 @@ function makeAudio() {
     },
     stopVoice() { try { voiceSrc?.stop(); } catch {} voiceSrc=null; },
     get voiceSpeaking() { return voiceSrc!==null; },
+
+    // ── The user's own voice, coming back ─────────────────────────────────
+    //
+    // speakVoice above plays bytes a provider synthesised for us. This plays
+    // bytes the person's own microphone produced, through the modulation
+    // engine in lib/voice-engine.ts, so their thought returns to them lower,
+    // slower and from somewhere else. No provider, no key, no network.
+    //
+    // Decoded and trimmed once, cached by the caller, because granulating a
+    // buffer is cheap but decoding one is not.
+    async decodeOwnVoice(bytes:ArrayBuffer):Promise<AudioBuffer|null> {
+      let buf:AudioBuffer;
+      try { buf=await decode(bytes); } catch { return null; }
+      try {
+        // Mono: a microphone recording is one source, and the playback chain
+        // puts it in space with a panner rather than with its own stereo.
+        const ch0=buf.getChannelData(0);
+        const {start,end}=findSpeechBounds(ch0,buf.sampleRate);
+        const cap=Math.round(ECHO_MAX_SEC*buf.sampleRate);
+        const len=Math.min(end-start,cap);
+        if (len<buf.sampleRate*0.15) return null;   // under 150ms is not a thought
+        const out=ac.createBuffer(1,len,buf.sampleRate);
+        out.getChannelData(0).set(ch0.subarray(start,start+len));
+        return out;
+      } catch { return buf; }
+    },
+
+    /**
+     * Schedule the whole echo up front and return how long it will take, so
+     * the caller can sequence the sky's own reply after it without polling.
+     *
+     * Every grain is two nodes and they are all created now; the audio thread
+     * runs the schedule on its own clock, which is why this stays smooth even
+     * while the galaxy is building on the main thread.
+     */
+    playOwnVoice(buf:AudioBuffer, s:ModSettings, pos?:[number,number,number]):number {
+      if (ac.state==="suspended") { try { ac.resume(); } catch {} }
+      stopOwn();
+
+      const plan=planGrains(buf.duration,s.semitones,s.rate);
+      if (!plan.length) return 0;
+
+      // Air absorption, then the blur, then into space. Distance is built
+      // from three things that all have to move together or it reads as an
+      // effect rather than as a place: top end, reverb and level.
+      const sum=ac.createGain(); sum.gain.value=gainForDistance(s.distance);
+      const lp=ac.createBiquadFilter();
+      lp.type="lowpass"; lp.frequency.value=lowpassForDistance(s.distance); lp.Q.value=0.4;
+      sum.connect(lp);
+
+      const tail=ac.createGain(); tail.gain.value=1;
+      lp.connect(tail);
+
+      // Blur: a short feedback delay with its own lowpass in the loop. This
+      // is what distance does to consonants — they arrive more than once,
+      // slightly late and progressively duller, and stop being crisp.
+      const bp=blurParams(s.blur);
+      if (bp.mix>0.001) {
+        const d=ac.createDelay(0.4); d.delayTime.value=bp.delaySec;
+        const fb=ac.createGain(); fb.gain.value=bp.feedback;
+        const fbLp=ac.createBiquadFilter(); fbLp.type="lowpass"; fbLp.frequency.value=2200;
+        const wet=ac.createGain(); wet.gain.value=bp.mix;
+        lp.connect(d); d.connect(fbLp); fbLp.connect(fb); fb.connect(d);
+        d.connect(wet); wet.connect(tail);
+      }
+
+      if (pos && hasPannerNode) {
+        const p=ac.createPanner();
+        p.panningModel="HRTF"; p.distanceModel="inverse";
+        p.refDistance=45; p.maxDistance=400; p.rolloffFactor=0.9;
+        const [x,y,z]=pos;
+        if ((p as any).positionX) { p.positionX.value=x; p.positionY.value=y; p.positionZ.value=z; }
+        else if (typeof (p as any).setPosition==="function") (p as any).setPosition(x,y,z);
+        tail.connect(p); p.connect(voiceBus);
+      } else {
+        tail.connect(voiceBus);
+      }
+
+      // Into the same convolver everything else uses, so the voice is in the
+      // same room as the galaxy rather than in one of its own.
+      const send=ac.createGain(); send.gain.value=reverbForDistance(s.distance);
+      tail.connect(send); send.connect(verb);
+
+      // A little lead time: scheduling the first grain at exactly currentTime
+      // means it is already late by the time the audio thread sees it.
+      const t0=ac.currentTime+0.06;
+      const win=hann(128);
+
+      for (const g of plan) {
+        let src:AudioBufferSourceNode, gn:GainNode;
+        try {
+          src=ac.createBufferSource(); src.buffer=buf;
+          src.playbackRate.value=g.playbackRate;
+          gn=ac.createGain(); gn.gain.value=0;
+        } catch { break; }
+        try {
+          gn.gain.setValueCurveAtTime(win,t0+g.at,g.outDur);
+        } catch {
+          // Older Safari rejects overlapping value curves. Linear ramps are a
+          // triangular window rather than a Hann one, which sums to a slight
+          // ripple at 50% overlap instead of flat — audible as a faint
+          // tremolo, and much less audible than no echo at all.
+          const half=g.outDur/2;
+          try {
+            gn.gain.setValueAtTime(0,t0+g.at);
+            gn.gain.linearRampToValueAtTime(1,t0+g.at+half);
+            gn.gain.linearRampToValueAtTime(0,t0+g.at+g.outDur);
+          } catch {}
+        }
+        src.connect(gn); gn.connect(sum);
+        try {
+          src.start(t0+g.at,g.offset,g.dur);
+          src.stop(t0+g.at+g.outDur+0.02);
+        } catch { continue; }
+        ownSrcs.push(src);
+      }
+
+      if (!ownSrcs.length) return 0;
+      let end=0;
+      for (const g of plan) end=Math.max(end,g.at+g.outDur);
+      ownUntil=ac.currentTime+end+0.1;
+      return end;
+    },
+
+    stopOwnVoice() { stopOwn(); },
+    get ownVoiceSpeaking() { return ownSrcs.length>0 && ac.currentTime<ownUntil; },
 
     // A well spawning: attract wells get a warm rising swell, repel wells
     // a sharp inverse-glide burst, so the two gestures read as opposites.
@@ -2257,6 +2401,27 @@ export default function AetherCanvas() {
   const voiceRef     = useRef<any>(null);
   const speechRef    = useRef<ReturnType<typeof makeSpeech>>(null);
   const cloneRef     = useRef<ReturnType<typeof makeCloneVoice>|null>(null);
+
+  // ── The user's own voice ──────────────────────────────────────────────────
+  //
+  // A promise, not a Capture: recognition can finish before getUserMedia has
+  // resolved, and holding only the settled handle loses the recording of
+  // anyone who speaks quickly.
+  const captureRef = useRef<Promise<Capture|null>|null>(null);
+  // Bytes waiting for a galaxy to attach themselves to. Set when the mic
+  // stops, taken when the star is made.
+  const pendingVoiceRef = useRef<ArrayBuffer|null>(null);
+  // Decoded recordings by star id. In memory only — never uploaded, never
+  // written to disk, gone on reload. See the note at the top of lib/mic.ts.
+  const echoRef = useRef<Map<number,AudioBuffer>>(new Map());
+  const [echoIds,setEchoIds] = useState<number[]>([]);
+  const [echoing,setEchoing] = useState(false);
+
+  const [auth,setAuth]           = useState<Auth|null>(null);
+  const [signIn,setSignIn]       = useState(false);
+  // Resolved in an effect, not at render: authAvailable() reads window, and
+  // this component is server-rendered first.
+  const [canSignIn,setCanSignIn] = useState(false);
 
   const [thought,      setThought]      = useState("");
   const [whisper,      setWhisper]      = useState("I am Aether. Whisper a thought, and watch it become a galaxy.");
@@ -4795,10 +4960,23 @@ export default function AetherCanvas() {
     setStarBorn(true);
     if (starBornTimer.current) clearTimeout(starBornTimer.current);
     starBornTimer.current=setTimeout(()=>setStarBorn(false),3200);
-    fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)})
-      .then(r=>r.json())
-      .then(d=>{ if (d?.ok&&d.id) setShareId(d.id); })
-      .catch(()=>{});
+    // Signed in, the row is stored against the account and can be read back
+    // on another device; signed out, it is stored anonymously exactly as
+    // before. The token is fetched fresh rather than held in a ref because an
+    // access token lives about an hour, and a tab left open overnight would
+    // otherwise go back to saving anonymously without anyone noticing.
+    void (async()=>{
+      let headers:Record<string,string>={"Content-Type":"application/json"};
+      try {
+        const a=await currentAuth();
+        if (a) headers={...headers,Authorization:`Bearer ${a.token}`};
+      } catch {}
+      try {
+        const r=await fetch("/api/save",{method:"POST",headers,body:JSON.stringify(s)});
+        const d=await r.json();
+        if (d?.ok&&d.id) setShareId(d.id);
+      } catch {}
+    })();
   },[bumpStreak]);
 
   // Cinematic intro — the cosmos introduces itself, spelled in stars
@@ -4848,6 +5026,68 @@ export default function AetherCanvas() {
     } catch {}
   },[]);
 
+  // ── Accounts ───────────────────────────────────────────────────────────────
+  // Pick up a session stored from last time, or one arriving on the URL from
+  // a clicked email link, and then follow it: onAuthChange also fires on the
+  // hourly token refresh, which is what keeps a tab left open all day from
+  // quietly going back to saving anonymously.
+  useEffect(()=>{
+    if (!authAvailable()) return;
+    setCanSignIn(true);
+    void restoreFromLink().then(a=>{ if (a) setAuth(a); }).catch(()=>{});
+    return onAuthChange(a=>setAuth(a));
+  },[]);
+
+  // Signed in, the sky stored against the account comes back and is merged
+  // into the one in this browser. Local copies win — see mergeStars — because
+  // a local star carries the answers that pull it closer and the stored row
+  // is a snapshot from before any of that happened.
+  useEffect(()=>{
+    if (!auth) return;
+    let cancelled=false;
+    void (async()=>{
+      let rows:any[];
+      try {
+        const r=await fetch("/api/stars",{headers:{Authorization:`Bearer ${auth.token}`}});
+        if (!r.ok) return;
+        rows=await r.json();
+      } catch { return; }
+      if (cancelled||!Array.isArray(rows)||!rows.length) return;
+
+      const remote:SavedStar[]=rows.map((x:any)=>({
+        // Stored rows have uuid ids; the sky's ids are the millisecond the
+        // thought was made, and everything downstream treats them as a time —
+        // recedeRadius reads the id to decide how far away a star sits. So the
+        // row's created_at becomes its id.
+        id:Date.parse(x?.created_at)||Date.now(),
+        thought:String(x?.thought??""),
+        whisper:String(x?.whisper??""),
+        palette:Array.isArray(x?.palette)&&x.palette.length>=3?x.palette:["#0d0221","#4c1d95","#a78bfa"],
+        form:(FORMS as readonly string[]).includes(x?.form)?x.form as FormType:"spiral",
+        energy:Number.isFinite(Number(x?.energy))?Number(x.energy):0.5,
+        // A row saved before positions were stored gets one derived the same
+        // way a new star would, so it lands somewhere meaningful rather than
+        // at the origin.
+        pos:Array.isArray(x?.pos)&&x.pos.length===3
+          ? x.pos as [number,number,number]
+          : starPos(x?.palette?.[2]||"#b892ff",Number(x?.energy)||0.5),
+      })).filter(s=>s.whisper);
+
+      const merged=mergeStars(archiveRef.current,remote,Number.MAX_SAFE_INTEGER);
+      // mergeStars hands back the same array when there is nothing new, so
+      // this skips a full geometry rebuild of every star in the sky.
+      if (cancelled||merged===archiveRef.current) return;
+
+      archiveRef.current=merged;
+      starsRef.current=merged.slice(-CAP);
+      setList([...starsRef.current].reverse());
+      setCount(starsRef.current.length);
+      try { localStorage.setItem("aether_stars",JSON.stringify(merged)); } catch {}
+      sceneRef.current.rebuildStars?.(starsRef.current);
+    })();
+    return ()=>{ cancelled=true; };
+  },[auth]);
+
   const applyResult=useCallback((pal:string[],fm:FormType,en:number,text:string,save?:string,question?:string)=>{
     // Spell the thought's most powerful word in stars before the galaxy forms
     const word=save
@@ -4867,22 +5107,82 @@ export default function AetherCanvas() {
     // below conversational pace.
     const sayRate=0.80+en*0.10;
     const sayPitch=0.92+en*0.06;
-    if (sound) sayLine(text,{delay:1500,rate:sayRate,pitch:sayPitch});
+
+    const id=Date.now();
+    const pos=starPos(pal[2]||pal[1]||"#b892ff",en);
+
+    // ── Your own voice, before the sky's ──────────────────────────────────
+    //
+    // If the thought was spoken rather than typed, we have a recording of it
+    // (lib/mic.ts) and it goes back out first, through the modulation engine,
+    // as the star leaves. You hear yourself say the thing you just said, a
+    // little lower and a little slower, from out there.
+    //
+    // This is the order the whole feature rests on. Reversed — sky first,
+    // then you — it reads as a playback button. This way round the thought
+    // and the voice saying it are one gesture, and what answers afterwards
+    // is answering something that has already left you.
+    const bytes=save?pendingVoiceRef.current:null;
+    pendingVoiceRef.current=null;
+
+    if (!bytes||!sound) {
+      if (sound) sayLine(text,{delay:1500,rate:sayRate,pitch:sayPitch});
+    } else {
+      void (async()=>{
+        const a=audioRef.current as any;
+        let buf:AudioBuffer|null=null;
+        try { buf=a?.decodeOwnVoice?await a.decodeOwnVoice(bytes):null; } catch {}
+        if (!buf) {
+          // Undecodable, too short, or silence. The sky answers as it always
+          // did and nobody is told that a thing they did not ask for failed.
+          sayLine(text,{delay:1500,rate:sayRate,pitch:sayPitch});
+          return;
+        }
+        echoRef.current.set(id,buf);
+        // Recordings are AudioBuffers of raw float samples — a few hundred KB
+        // each. Capped so a long session cannot grow without bound.
+        if (echoRef.current.size>40) {
+          const oldest=echoRef.current.keys().next().value;
+          if (oldest!==undefined) echoRef.current.delete(oldest);
+        }
+        setEchoIds(Array.from(echoRef.current.keys()));
+
+        await new Promise(r=>setTimeout(r,900));
+        let dur=0;
+        try { dur=a.playOwnVoice?.(buf,settingsForAge(0,true))||0; } catch {}
+        if (dur>0) {
+          setEchoing(true);
+          setTimeout(()=>setEchoing(false),Math.round(dur*1000)+200);
+        }
+        // Then the sky, into the silence your own voice leaves behind.
+        sayLine(text,{delay:Math.round(dur*1000)+700,rate:sayRate,pitch:sayPitch});
+      })();
+    }
+
     if (save) {
-      const id=Date.now();
-      remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,
-        pos:starPos(pal[2]||pal[1]||"#b892ff",en),question});
+      remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,pos,question});
       // Held back until the star has finished its flight (2.6s) and you have
       // read the line. Asking over the top of the animation would make the
       // question feel like a form field on a loading screen; arriving after it
       // lands makes it feel like the star asking.
       if (askTimer.current) clearTimeout(askTimer.current);
-      if (question) askTimer.current=setTimeout(()=>{
-        setReply(""); setAsk({id,q:question,turn:1});
-        // A beat after the line it follows, and a touch slower still: this is
-        // the only thing Aether asks, and it should not sound like a prompt.
-        if (sound) sayLine(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
-      },3500);
+      if (question) {
+        const fire=()=>{
+          // And never over the top of your own voice coming back. The echo's
+          // length depends on how long you spoke for, so this cannot be a
+          // fixed delay — it waits for the thing itself.
+          if ((audioRef.current as any)?.ownVoiceSpeaking) {
+            askTimer.current=setTimeout(fire,600);
+            return;
+          }
+          setReply(""); setAsk({id,q:question,turn:1});
+          // A beat after the line it follows, and a touch slower still: this
+          // is the only thing Aether asks, and it should not sound like a
+          // prompt.
+          if (sound) sayLine(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
+        };
+        askTimer.current=setTimeout(fire,3500);
+      }
     }
     setWhisper(text);
   },[remember,showMorphLabel,sound,sayLine]);
@@ -5248,17 +5548,48 @@ export default function AetherCanvas() {
     const lang=(typeof navigator!=="undefined"&&navigator.language)||"en-US";
     rec.lang=/^en/i.test(lang)?lang:"en-US";
     rec.continuous=false; rec.interimResults=false;
+
+    // Record the microphone a second time, in parallel, so the thought can be
+    // played back in the voice it was spoken in. SpeechRecognition keeps its
+    // audio to itself — see the note at the top of lib/mic.ts — so this is
+    // the only way to have it.
+    //
+    // Only for the thought itself. A reply inside an exchange is not a thing
+    // that becomes a star, so there would be nothing to attach it to.
+    if (target==="thought"&&micSupported()) {
+      captureRef.current=captureVoice().catch(()=>null);
+    }
+    const keepRecording=async()=>{
+      const p=captureRef.current; captureRef.current=null;
+      if (!p) return;
+      try {
+        const c=await p;
+        const bytes=await c?.stop();
+        if (bytes) pendingVoiceRef.current=bytes;
+      } catch {}
+    };
+    const dropRecording=()=>{
+      const p=captureRef.current; captureRef.current=null;
+      if (p) p.then(c=>c?.cancel()).catch(()=>{});
+    };
+
     rec.onresult=(e:any)=>{
       const transcript=e.results[0]?.[0]?.transcript||"";
       if (transcript.trim()) {
         // Speaking is also a reason to stop being spoken to.
         stopSaying();
         if (target==="reply") setReply(transcript); else setThought(transcript);
+        void keepRecording();
+      } else {
+        dropRecording();
       }
       setVoiceActive(false);
     };
-    rec.onerror=()=>setVoiceActive(false);
-    rec.onend=()=>setVoiceActive(false);
+    rec.onerror=()=>{ dropRecording(); setVoiceActive(false); };
+    // onend arrives after onresult, where the recording has already been
+    // claimed and captureRef nulled; this catches the case where recognition
+    // ended without ever producing a result, so the microphone is released.
+    rec.onend=()=>{ dropRecording(); setVoiceActive(false); };
     try{rec.start(); voiceRef.current=rec; setVoiceActive(true);}catch{setVoiceActive(false);}
   },[stopSaying]);
 
@@ -5425,6 +5756,10 @@ export default function AetherCanvas() {
           ...(count>0?[[skyMode?"✕ EXIT SKY":"MY SKY",toggleSkyMode] as [string,()=>void]]:[]),
           ["EXPLORE · "+FORMS.length,()=>setExplore(e=>!e)],
           ["ZEN MODE",()=>setZen(true)],
+          // Only when accounts are actually configured on this deployment,
+          // so a build without Supabase keys does not advertise a door that
+          // opens onto an apology.
+          ...(canSignIn?[[auth?"SKY · SAVED":"KEEP MY SKY",()=>setSignIn(true)] as [string,()=>void]]:[]),
           ["CAPTURE ✦",capture],
           ...(canClip&&whisper?[[clipping?`RECORDING · ${Math.round(clipPct*100)}%`:"RECORD CLIP ✦",makeClip] as [string,()=>void]]:[]),
         ] as [string,()=>void][]).map(([label,fn])=>(
@@ -5618,8 +5953,39 @@ export default function AetherCanvas() {
       {voiceHint&&(
         <div style={{position:"absolute",left:0,right:0,bottom:86,zIndex:4,display:"flex",justifyContent:"center",padding:"0 18px"}}>
           <div style={{background:"rgba(9,6,18,.97)",border:`1px solid ${a44}`,borderRadius:14,padding:"9px 18px",fontSize:12.5,color:"rgba(222,217,247,.9)",maxWidth:400,textAlign:"center",lineHeight:1.4,boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
-            Your browser will ask for mic access next — nothing is recorded or saved, it's only turned into text.
+            {/* This used to say "nothing is recorded or saved". It is now
+                recorded, so it cannot say that any more — a reassuring line
+                about privacy that has quietly stopped being true is worse
+                than no line. What is still true is the part that matters:
+                the recording never leaves the tab. */}
+            Your browser will ask for mic access next. Your voice is kept only so your
+            thought can be spoken back to you — it stays in this tab, is never uploaded,
+            and is gone when you close it.
           </div>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {signIn&&(
+          <SignIn
+            accent={accentColor}
+            auth={auth}
+            onClose={()=>setSignIn(false)}
+            onSignedIn={a=>{ setAuth(a); setSignIn(false); }}
+            onSignedOut={()=>{ setAuth(null); setSignIn(false); }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* The echo, while it is playing. Without this the first time it
+          happens reads as a glitch — you do not expect to hear yourself. */}
+      {echoing&&(
+        <div style={{position:"absolute",left:0,right:0,top:92,zIndex:4,display:"flex",justifyContent:"center",pointerEvents:"none"}}>
+          <motion.div
+            initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0}}
+            style={{fontSize:9.5,letterSpacing:"0.26em",color:a66,textTransform:"uppercase"}}>
+            ⊙ your voice, from out there
+          </motion.div>
         </div>
       )}
 
@@ -5862,6 +6228,40 @@ export default function AetherCanvas() {
                   style={{background:"none",border:"1px solid rgba(200,196,235,.24)",color:"rgba(200,196,235,.72)",borderRadius:999,padding:"9px 14px",fontSize:9.5,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
                   ⊳ HEAR
                 </button>
+                {/* Your own voice, from the star it became.
+                    This is where distance meaning time becomes audible. The
+                    sky already recedes a star on a log curve over six months
+                    (lib/sky.ts) and the voice ages on exactly that curve
+                    (lib/voice-engine.ts), so an old thought comes back lower,
+                    slower, duller and further off than a new one — and it
+                    plays from where the star actually is now, not where it
+                    was when you let it go.
+                    Offered only for thoughts spoken in this session, because
+                    the recording lives in memory and nowhere else. */}
+                {echoIds.includes(selectedStar.id)&&(
+                  <button onClick={()=>{
+                      const buf=echoRef.current.get(selectedStar.id);
+                      const a=audioRef.current as any;
+                      if (!buf||!a?.playOwnVoice) return;
+                      stopSaying();
+                      const days=selectedStar.id>1e12
+                        ? Math.max(0,(Date.now()-selectedStar.id)/86400000)
+                        : 0;
+                      let dur=0;
+                      try {
+                        dur=a.playOwnVoice(buf,settingsForAge(days),
+                          recededPos(selectedStar,Date.now()))||0;
+                      } catch {}
+                      if (dur>0) {
+                        setEchoing(true);
+                        setTimeout(()=>setEchoing(false),Math.round(dur*1000)+200);
+                      }
+                    }}
+                    aria-label="hear this thought in your own voice"
+                    style={{background:"none",border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:"9px 14px",fontSize:9.5,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                    ⊙ YOUR VOICE
+                  </button>
+                )}
                 <button onClick={()=>setSelectedStar(null)}
                   style={{background:"none",border:"1px solid rgba(200,196,235,.24)",color:"rgba(200,196,235,.6)",borderRadius:999,padding:"9px 14px",fontSize:9.5,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"inherit"}}>
                   CLOSE

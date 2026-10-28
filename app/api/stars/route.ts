@@ -1,21 +1,32 @@
 import { isRealUserId, whispersDb } from "@/lib/supabase";
+import { callerFrom } from "@/lib/user";
+
+// Without this the route is static.
+//
+// It used to read searchParams, which marked it dynamic as a side effect.
+// Now that identity comes from a header instead, Next sees a GET handler that
+// touches nothing request-shaped, prerenders it at build time and serves that
+// one response to everybody — an empty array, forever, however many stars the
+// caller has. The build output is where this shows up: ○ rather than ƒ.
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const userId = searchParams.get("user_id");
-
   const db = whispersDb();
   if (!db) return Response.json([]);
 
-  // No bulk "public feed" — a whisper is private to whoever wrote it unless
-  // shared explicitly (via its own /w/[id] link, fetched by id elsewhere).
-  // Without a user_id this must return nothing rather than let anyone
-  // enumerate other people's whispers.
+  // The owner is read from the signed token, and the ?user_id= parameter this
+  // route used to accept is gone.
   //
-  // And 'anon' is not a user_id. It is the placeholder /api/save writes when
-  // it is given none, so every row we have ever stored carries it: asking for
-  // it here used to return a page of strangers' thoughts. Rejected until rows
-  // carry a real owner.
+  // That parameter was safe only while it was useless: isRealUserId rejects
+  // the 'anon' placeholder every stored row carried, so it has always
+  // returned nothing. The moment rows carry real uuids it would have become
+  // an endpoint that hands over anybody's thoughts to anybody holding their
+  // id — and a uuid is not a secret. It travels in share links and logs.
+  //
+  // No bulk feed either: a whisper is private to whoever wrote it unless
+  // shared explicitly, via its own unguessable /w/[id] link.
+  const caller = await callerFrom(req);
+  const userId = caller?.userId ?? null;
   if (!isRealUserId(userId)) return Response.json([]);
 
   try {
