@@ -2433,6 +2433,8 @@ export default function AetherCanvas() {
   const echoRef = useRef<Map<number,AudioBuffer>>(new Map());
   const [echoIds,setEchoIds] = useState<number[]>([]);
   const [echoing,setEchoing] = useState(false);
+  const [voiceKept,setVoiceKept] = useState(false);
+  const keptTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
 
   const [auth,setAuth]           = useState<Auth|null>(null);
   const [signIn,setSignIn]       = useState(false);
@@ -5158,6 +5160,17 @@ export default function AetherCanvas() {
         // they did not ask for did not happen.
         if (!buf) return;
         echoRef.current.set(id,buf);
+        // Say that it was kept.
+        //
+        // Removing the playback at release left nothing in its place, so the
+        // moment read as the feature being absent rather than as it being
+        // somewhere else. One line turns the silence into an invitation: the
+        // voice is not missing, it is waiting in the star. It also only ever
+        // appears when a recording genuinely exists, so it is a statement of
+        // fact rather than a promise about a feature.
+        setVoiceKept(true);
+        if (keptTimer.current) clearTimeout(keptTimer.current);
+        keptTimer.current=setTimeout(()=>setVoiceKept(false),5200);
         // Recordings are AudioBuffers of raw float samples — a few hundred KB
         // each. Capped so a long session cannot grow without bound.
         if (echoRef.current.size>40) {
@@ -5983,6 +5996,26 @@ export default function AetherCanvas() {
             initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0}}
             style={{fontSize:9.5,letterSpacing:"0.26em",color:a66,textTransform:"uppercase"}}>
             ⊙ your voice, from out there
+          </motion.div>
+        </div>
+      )}
+
+      {/* And when a recording was kept but is not playing yet — the thought
+          has just become a star and your voice went with it. Phrased as
+          something gained and somewhere to go, because an absence announced
+          as an absence is the one way this reads badly. */}
+      {voiceKept&&!echoing&&(
+        <div style={{position:"absolute",left:0,right:0,top:92,zIndex:4,display:"flex",justifyContent:"center",padding:"0 24px",pointerEvents:"none"}}>
+          <motion.div
+            initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0}}
+            transition={{duration:0.7}}
+            style={{display:"flex",alignItems:"center",gap:10,background:"rgba(9,6,18,.82)",
+              border:`1px solid ${a44}`,borderRadius:999,padding:"8px 18px",
+              backdropFilter:"blur(8px)",maxWidth:520}}>
+            <span style={{color:a88,fontSize:13,lineHeight:1}}>⊙</span>
+            <span style={{fontSize:11.5,letterSpacing:"0.04em",color:"rgba(226,222,250,.92)",textAlign:"center"}}>
+              Your voice went with it — open <b style={{color:accentColor,fontWeight:500}}>My Sky</b> and ask the star to say it back.
+            </span>
           </motion.div>
         </div>
       )}
