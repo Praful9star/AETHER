@@ -1,3 +1,14 @@
+-- SUPERSEDED BY 003. This file was never applied, and should not be.
+--
+-- Kept for the reasoning below, which is still correct about what 001 got
+-- wrong. What it got wrong itself: it revokes the table from anon and
+-- authenticated and never grants it to service_role, because it assumed
+-- service_role already held the grants a Supabase project normally hands out
+-- by default. In this project it never did — no role but postgres could touch
+-- `whispers` at all — so applying this would have locked the table to exactly
+-- nobody while looking correct. 003 inspects that, fixes it, and carries the
+-- rest of this file's intent.
+--
 -- 001 turned RLS on but then wrote a read policy that defeated it.
 --
 --   using (... or user_id = coalesce(
