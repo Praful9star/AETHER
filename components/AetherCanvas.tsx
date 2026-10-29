@@ -7,9 +7,9 @@ import { MAX_TURNS, CLOSING_LINES, NEUTRAL_LINES, hashString as hashExch } from 
 import { recededPos } from "@/lib/sky";
 import { recordClip, canRecord, clipSize } from "@/lib/clip";
 import {
-  planGrains, hann, settingsForAge, lowpassForDistance, gainForDistance,
-  reverbForDistance, blurParams, findSpeechBounds, ECHO_MAX_SEC,
-  type ModSettings,
+  planGrains, hann, realVoiceSettings, isUnshifted, lowpassForDistance,
+  gainForDistance, reverbForDistance, blurParams, findSpeechBounds,
+  ECHO_MAX_SEC, type ModSettings,
 } from "@/lib/voice-engine";
 import { captureVoice, micSupported, type Capture } from "@/lib/mic";
 import { authAvailable, currentAuth, onAuthChange, restoreFromLink, type Auth } from "@/lib/auth";
@@ -1681,8 +1681,15 @@ function makeAudio() {
       if (ac.state==="suspended") { try { ac.resume(); } catch {} }
       stopOwn();
 
-      const plan=planGrains(buf.duration,s.semitones,s.rate);
-      if (!plan.length) return 0;
+      // Nothing to shift means nothing to granulate. The sky plays your real
+      // voice (realVoiceSettings), so this is the normal path now: one buffer
+      // source straight through the distance chain, which is both cheaper —
+      // two nodes instead of two per grain — and cleaner, since granular
+      // resynthesis at ratio 1 is a no-op that can still add a faint warble
+      // where grains meet. The grain path stays for any setting that actually
+      // shifts pitch or time.
+      const plan=isUnshifted(s)?null:planGrains(buf.duration,s.semitones,s.rate);
+      if (plan&&!plan.length) return 0;
 
       // Air absorption, then the blur, then into space. Distance is built
       // from three things that all have to move together or it reads as an
@@ -1728,8 +1735,18 @@ function makeAudio() {
       // A little lead time: scheduling the first grain at exactly currentTime
       // means it is already late by the time the audio thread sees it.
       const t0=ac.currentTime+0.06;
-      const win=hann(128);
 
+      if (!plan) {
+        let src:AudioBufferSourceNode;
+        try { src=ac.createBufferSource(); src.buffer=buf; } catch { return 0; }
+        src.connect(sum);
+        try { src.start(t0); } catch { return 0; }
+        ownSrcs.push(src);
+        ownUntil=t0+buf.duration+0.1;
+        return buf.duration;
+      }
+
+      const win=hann(128);
       for (const g of plan) {
         let src:AudioBufferSourceNode, gn:GainNode;
         try {
@@ -5111,33 +5128,35 @@ export default function AetherCanvas() {
     const id=Date.now();
     const pos=starPos(pal[2]||pal[1]||"#b892ff",en);
 
-    // ── Your own voice, before the sky's ──────────────────────────────────
+    if (sound) sayLine(text,{delay:1500,rate:sayRate,pitch:sayPitch});
+
+    // ── Keep the recording; do not play it here ───────────────────────────
     //
-    // If the thought was spoken rather than typed, we have a recording of it
-    // (lib/mic.ts) and it goes back out first, through the modulation engine,
-    // as the star leaves. You hear yourself say the thing you just said, a
-    // little lower and a little slower, from out there.
+    // If the thought was spoken rather than typed we have a recording of it
+    // (lib/mic.ts), and it is decoded and attached to the star so the sky can
+    // play it back later.
     //
-    // This is the order the whole feature rests on. Reversed — sky first,
-    // then you — it reads as a playback button. This way round the thought
-    // and the voice saying it are one gesture, and what answers afterwards
-    // is answering something that has already left you.
+    // It used to play immediately too, as the star left. That is gone on
+    // purpose. Hearing it there put your own voice on top of the one moment
+    // the galaxy is forming and the line is arriving, so three things
+    // competed for the same few seconds, and it also pushed the sky's own
+    // line almost two seconds late. Keeping it to the sky makes it something
+    // you go and ask for, which is the gesture that matches it: you went back
+    // to the star on purpose.
+    //
+    // Everything below the play call stays — the capture, the decode, the
+    // trim and the cache — because without it a star has no voice at all.
     const bytes=save?pendingVoiceRef.current:null;
     pendingVoiceRef.current=null;
 
-    if (!bytes||!sound) {
-      if (sound) sayLine(text,{delay:1500,rate:sayRate,pitch:sayPitch});
-    } else {
+    if (bytes) {
       void (async()=>{
         const a=audioRef.current as any;
         let buf:AudioBuffer|null=null;
         try { buf=a?.decodeOwnVoice?await a.decodeOwnVoice(bytes):null; } catch {}
-        if (!buf) {
-          // Undecodable, too short, or silence. The sky answers as it always
-          // did and nobody is told that a thing they did not ask for failed.
-          sayLine(text,{delay:1500,rate:sayRate,pitch:sayPitch});
-          return;
-        }
+        // Undecodable, too short, or silence. Nobody is told that a thing
+        // they did not ask for did not happen.
+        if (!buf) return;
         echoRef.current.set(id,buf);
         // Recordings are AudioBuffers of raw float samples — a few hundred KB
         // each. Capped so a long session cannot grow without bound.
@@ -5146,16 +5165,6 @@ export default function AetherCanvas() {
           if (oldest!==undefined) echoRef.current.delete(oldest);
         }
         setEchoIds(Array.from(echoRef.current.keys()));
-
-        await new Promise(r=>setTimeout(r,900));
-        let dur=0;
-        try { dur=a.playOwnVoice?.(buf,settingsForAge(0,true))||0; } catch {}
-        if (dur>0) {
-          setEchoing(true);
-          setTimeout(()=>setEchoing(false),Math.round(dur*1000)+200);
-        }
-        // Then the sky, into the silence your own voice leaves behind.
-        sayLine(text,{delay:Math.round(dur*1000)+700,rate:sayRate,pitch:sayPitch});
       })();
     }
 
@@ -5166,23 +5175,12 @@ export default function AetherCanvas() {
       // question feel like a form field on a loading screen; arriving after it
       // lands makes it feel like the star asking.
       if (askTimer.current) clearTimeout(askTimer.current);
-      if (question) {
-        const fire=()=>{
-          // And never over the top of your own voice coming back. The echo's
-          // length depends on how long you spoke for, so this cannot be a
-          // fixed delay — it waits for the thing itself.
-          if ((audioRef.current as any)?.ownVoiceSpeaking) {
-            askTimer.current=setTimeout(fire,600);
-            return;
-          }
-          setReply(""); setAsk({id,q:question,turn:1});
-          // A beat after the line it follows, and a touch slower still: this
-          // is the only thing Aether asks, and it should not sound like a
-          // prompt.
-          if (sound) sayLine(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
-        };
-        askTimer.current=setTimeout(fire,3500);
-      }
+      if (question) askTimer.current=setTimeout(()=>{
+        setReply(""); setAsk({id,q:question,turn:1});
+        // A beat after the line it follows, and a touch slower still: this is
+        // the only thing Aether asks, and it should not sound like a prompt.
+        if (sound) sayLine(question,{delay:400,rate:sayRate-0.04,pitch:sayPitch});
+      },3500);
     }
     setWhisper(text);
   },[remember,showMorphLabel,sound,sayLine]);
@@ -6229,13 +6227,14 @@ export default function AetherCanvas() {
                   ⊳ HEAR
                 </button>
                 {/* Your own voice, from the star it became.
-                    This is where distance meaning time becomes audible. The
-                    sky already recedes a star on a log curve over six months
-                    (lib/sky.ts) and the voice ages on exactly that curve
-                    (lib/voice-engine.ts), so an old thought comes back lower,
-                    slower, duller and further off than a new one — and it
-                    plays from where the star actually is now, not where it
-                    was when you let it go.
+                    The only place it plays. Your real voice, at the pitch and
+                    pace you said it — see realVoiceSettings for why the
+                    modulation is off — arriving from where the star actually
+                    is now, not where it was when you let it go. Only the
+                    space around it ages: an older thought is further off,
+                    duller and with more room, because the sky already recedes
+                    a star on a log curve over six months (lib/sky.ts) and the
+                    distance here follows that same curve.
                     Offered only for thoughts spoken in this session, because
                     the recording lives in memory and nowhere else. */}
                 {echoIds.includes(selectedStar.id)&&(
@@ -6249,7 +6248,7 @@ export default function AetherCanvas() {
                         : 0;
                       let dur=0;
                       try {
-                        dur=a.playOwnVoice(buf,settingsForAge(days),
+                        dur=a.playOwnVoice(buf,realVoiceSettings(days),
                           recededPos(selectedStar,Date.now()))||0;
                       } catch {}
                       if (dur>0) {

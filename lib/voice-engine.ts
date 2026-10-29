@@ -197,6 +197,43 @@ export function settingsForAge(days: number, near = false): ModSettings {
 }
 
 /**
+ * What the sky actually plays: your real voice.
+ *
+ * settingsForAge above is the full modulation, and it is what the engine was
+ * built for. Hearing it on real recordings decided against it: past a couple
+ * of semitones you stop recognising yourself, and the whole point of the
+ * feature is that the voice is unmistakably YOURS. A processed voice saying
+ * your words is a different, weaker thing — it is an effect again, which is
+ * exactly what we argued against when we chose this over cloning.
+ *
+ * So pitch and pace are left alone, exactly as recorded, and only the SPACE
+ * ages: a thought from today is close and present, one from months ago
+ * arrives from further off, duller and with more room around it. Distance is
+ * still time, and it is still audible — it just no longer costs you your own
+ * voice to hear it.
+ *
+ * Distance is also capped well short of 1.0. At full distance the air
+ * absorption filter takes the top end down to 1.6kHz, which is muffled enough
+ * to read as a recording of a recording rather than as you, far away.
+ */
+export function realVoiceSettings(days: number): ModSettings {
+  const t = ageCurve(days);
+  return {
+    semitones: 0,
+    rate: 1,
+    distance: 0.12 + 0.48 * t,
+    // Blur is a feedback delay, and too much of it smears consonants into
+    // somebody else. Roughly half what the full modulation used.
+    blur: 0.05 + 0.3 * t,
+  };
+}
+
+/** True when nothing needs granulating and the buffer can be played straight. */
+export function isUnshifted(s: ModSettings): boolean {
+  return Math.abs(s.semitones) < 1e-6 && Math.abs(s.rate - 1) < 1e-6;
+}
+
+/**
  * Air absorption. A voice across a large room loses its top end before it
  * loses its level, which is most of why distance is audible at all. 7.5kHz
  * at touching distance down to 1.6kHz at the far end of the sky.

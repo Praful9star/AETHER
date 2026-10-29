@@ -61,6 +61,42 @@ as an effect rather than as a place: a lowpass for air absorption (7.5kHz
 near, 1.6kHz far), a send into the same convolver the rest of the galaxy uses,
 and a short feedback delay that smears consonants the way a room does.
 
+### The modulation is built, measured, and switched off
+
+The engine above is real and tested. It is not used on the voice.
+
+Hearing it on actual recordings settled it: past about two semitones you stop
+recognising yourself, and the entire argument for choosing this over cloning
+was that the voice is unmistakably *yours*. A processed voice saying your own
+words is an effect again — the exact thing we said a cloned voice would be.
+
+So `realVoiceSettings` leaves pitch and pace at zero and ages only the
+**space**: air absorption, the galaxy's convolver, a short blur delay, and the
+panner position. `isUnshifted` detects that nothing needs shifting and the
+player sends the buffer straight through, which is both cheaper (two nodes
+instead of two per grain) and cleaner, since granular resynthesis at ratio 1
+is a no-op that can still add a faint warble where grains meet.
+
+Distance is also capped at 0.60 rather than 1.0. At full distance the air
+filter reaches 1.6kHz, which reads as a recording of a recording rather than
+as you, far away. Capped, an old thought still arrives at 4.0kHz — duller and
+further off, still plainly the person.
+
+This is the fourth feature testing has made us remove. The engine stays in the
+codebase and under test; turning it back on is one function call.
+
+### It plays only from the star
+
+It used to play at release too, 0.9 seconds after the star flew out. That is
+gone. It put the person's own voice on top of the one moment the galaxy is
+forming and the line is arriving — three things competing for the same few
+seconds — and it pushed Aether's own line nearly two seconds late.
+
+Now you open the sky, tap your star and ask for it. That gesture matches what
+the thing is: you came back to that thought on purpose. The capture, decode,
+trim and cache all still happen at release, because without them a star has no
+voice to give back.
+
 ### Distance is time, and now it is audible
 
 `lib/sky.ts` already recedes a star from 52 to 78 units over six months on a
