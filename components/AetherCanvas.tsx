@@ -13,6 +13,7 @@ import {
 } from "@/lib/voice-engine";
 import { captureVoice, micSupported, type Capture } from "@/lib/mic";
 import { authAvailable, currentAuth, onAuthChange, restoreFromLink, type Auth } from "@/lib/auth";
+import { HELPLINES, INTERNATIONAL, NOT_THERAPY, DOOR_LABEL, AI_DISCLOSURE } from "@/lib/crisis";
 import { mergeStars } from "@/lib/sky";
 import SignIn from "@/components/SignIn";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -2434,6 +2435,7 @@ export default function AetherCanvas() {
   const [echoIds,setEchoIds] = useState<number[]>([]);
   const [echoing,setEchoing] = useState(false);
   const [voiceKept,setVoiceKept] = useState(false);
+  const [crisis,setCrisis] = useState(false);
   const keptTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
 
   const [auth,setAuth]           = useState<Auth|null>(null);
@@ -5767,6 +5769,11 @@ export default function AetherCanvas() {
           ...(count>0?[[skyMode?"✕ EXIT SKY":"MY SKY",toggleSkyMode] as [string,()=>void]]:[]),
           ["EXPLORE · "+FORMS.length,()=>setExplore(e=>!e)],
           ["ZEN MODE",()=>setZen(true)],
+          // Always here. Not triggered by anything anyone writes, and never
+          // withheld — see lib/crisis.ts for why there is no detector. An
+          // always-open door needs nobody to be classified as in crisis,
+          // which means nobody can be classified wrongly.
+          ["⬡ "+DOOR_LABEL,()=>setCrisis(true)],
           // Only when accounts are actually configured on this deployment,
           // so a build without Supabase keys does not advertise a door that
           // opens onto an apology.
@@ -5975,6 +5982,68 @@ export default function AetherCanvas() {
           </div>
         </div>
       )}
+
+      {/* The crisis panel. Reachable from anywhere, at any time, without
+          anything being inferred about the person who opened it. Real numbers,
+          verified against several sources rather than written from memory,
+          with the one we are most certain of first — see lib/crisis.ts. */}
+      <AnimatePresence>
+        {crisis&&(
+          <motion.div
+            initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+            onClick={()=>setCrisis(false)}
+            style={{position:"fixed",inset:0,zIndex:70,background:"rgba(4,2,10,.9)",
+              backdropFilter:"blur(12px)",display:"flex",alignItems:"center",
+              justifyContent:"center",padding:20,overflowY:"auto"}}>
+            <motion.div
+              initial={{y:14,opacity:0}} animate={{y:0,opacity:1}}
+              onClick={e=>e.stopPropagation()}
+              style={{width:"100%",maxWidth:460,background:"rgba(9,6,18,.99)",
+                border:"1px solid rgba(255,201,139,.45)",borderRadius:18,padding:24,
+                display:"flex",flexDirection:"column",gap:16,
+                boxShadow:"0 20px 60px rgba(0,0,0,.65)"}}>
+              <div style={{fontSize:9.5,letterSpacing:"0.26em",color:"#ffc98b",textTransform:"uppercase"}}>
+                Talk to a person
+              </div>
+              {/* Plainly, and without softening. */}
+              <p style={{fontSize:14,lineHeight:1.6,color:"rgba(232,228,255,.94)",margin:0}}>
+                {NOT_THERAPY}
+              </p>
+              <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                {HELPLINES.map(h=>(
+                  <a key={h.tel} href={`tel:${h.tel}`}
+                    style={{display:"flex",flexDirection:"column",gap:3,
+                      background:"rgba(255,201,139,.08)",border:"1px solid rgba(255,201,139,.3)",
+                      borderRadius:12,padding:"12px 15px",textDecoration:"none"}}>
+                    <span style={{fontSize:17,color:"#ffe3bd",letterSpacing:"0.04em",fontWeight:500}}>
+                      {h.number}
+                    </span>
+                    <span style={{fontSize:11.5,color:"rgba(226,222,250,.72)"}}>
+                      {h.name} — {h.detail}
+                    </span>
+                  </a>
+                ))}
+              </div>
+              <a href={INTERNATIONAL.url} target="_blank" rel="noreferrer"
+                style={{fontSize:12,color:"rgba(200,196,235,.72)",textDecoration:"underline",
+                  textUnderlineOffset:3}}>
+                {INTERNATIONAL.label}
+              </a>
+              {/* Required from 2 August 2026, and consent does not remove it. */}
+              <p style={{fontSize:11,lineHeight:1.55,color:"rgba(200,196,235,.5)",margin:0,
+                borderTop:"1px solid rgba(200,196,235,.14)",paddingTop:13}}>
+                {AI_DISCLOSURE}
+              </p>
+              <button onClick={()=>setCrisis(false)}
+                style={{background:"none",border:"1px solid rgba(200,196,235,.26)",
+                  color:"rgba(200,196,235,.78)",borderRadius:999,padding:"10px 14px",
+                  fontSize:10,letterSpacing:"0.16em",cursor:"pointer",fontFamily:"inherit"}}>
+                CLOSE
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {signIn&&(
