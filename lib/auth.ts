@@ -200,6 +200,38 @@ export async function restoreFromLink(): Promise<Auth | null> {
   return auth;
 }
 
+/**
+ * Delete the account and every thought stored with it.
+ *
+ * The token is fetched fresh rather than passed in, so this cannot be called
+ * with a stale one and quietly fail. Reasons come back worded for a person
+ * rather than as codes, because the one thing somebody deleting their account
+ * must not be left with is uncertainty about whether it happened.
+ */
+export async function deleteAccount(): Promise<Outcome> {
+  const auth = await currentAuth();
+  if (!auth) return { ok: false, reason: "You are not signed in." };
+  try {
+    const r = await fetch("/api/account", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${auth.token}` },
+    });
+    const d = await r.json().catch(() => null);
+    if (d?.ok) return { ok: true };
+    const reason =
+      d?.reason === "not-configured" || d?.reason === "no-supabase"
+        ? "Accounts are not fully set up on this deployment, so nothing was deleted."
+        : d?.reason === "account-not-deleted"
+        ? "Your thoughts were deleted, but the account itself was not. Please try again."
+        : d?.reason === "not-signed-in"
+        ? "That session has expired. Sign in again and retry."
+        : "Could not delete the account. Nothing was changed.";
+    return { ok: false, reason };
+  } catch {
+    return { ok: false, reason: "Could not reach the server. Nothing was changed." };
+  }
+}
+
 export async function signOut(): Promise<void> {
   try { await authClient()?.auth.signOut(); } catch {}
 }

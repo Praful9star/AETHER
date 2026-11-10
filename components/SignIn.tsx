@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { cleanCode, sendCode, signOut, validCode, validEmail, verifyCode, type Auth } from "@/lib/auth";
+import { cleanCode, deleteAccount, sendCode, signOut, validCode, validEmail, verifyCode, type Auth } from "@/lib/auth";
 
 export default function SignIn({
   accent,
@@ -35,6 +35,8 @@ export default function SignIn({
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Deleting everything takes two taps. This is the first one having happened.
+  const [armed, setArmed] = useState(false);
   const codeRef = useRef<HTMLInputElement>(null);
 
   // Focus follows the step, so a person who has just read "we sent a code"
@@ -136,6 +138,44 @@ export default function SignIn({
             <button style={button} onClick={async () => { await signOut(); onSignedOut(); }}>
               SIGN OUT
             </button>
+
+            {/* Deleting everything.
+                Two taps, never one, because this cannot be undone — there is
+                no soft delete and no grace period, and for a product whose
+                promise is that a thought is yours, a deletion that keeps a
+                copy would be a lie with a timer on it. The second tap spells
+                out exactly what goes. */}
+            {!armed ? (
+              <button style={{ ...quiet, color: "rgba(255,170,170,.8)" }} onClick={() => { setArmed(true); setErr(""); }}>
+                delete my account and everything in it
+              </button>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "rgba(60,16,24,.5)", border: "1px solid rgba(255,140,150,.4)", borderRadius: 14, padding: 16 }}>
+                <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "rgba(255,226,228,.95)" }}>
+                  This deletes every thought stored with your account, and the account
+                  itself. Share links you have sent will stop working. It cannot be undone.
+                </div>
+                <div style={{ fontSize: 11.5, lineHeight: 1.5, color: "rgba(255,210,214,.72)" }}>
+                  The stars in this browser stay until you clear them — delete them from
+                  your sky if you want those gone too.
+                </div>
+                <button
+                  disabled={busy}
+                  onClick={async () => {
+                    if (busy) return;
+                    setBusy(true); setErr("");
+                    const r = await deleteAccount();
+                    setBusy(false);
+                    if (!r.ok) { setErr(r.reason || "Could not delete the account."); return; }
+                    await signOut();
+                    onSignedOut();
+                  }}
+                  style={{ ...button, background: "linear-gradient(135deg,#7a1f2c,#5a1621)", border: "1px solid rgba(255,140,150,.6)" }}>
+                  {busy ? "DELETING…" : "YES, DELETE EVERYTHING"}
+                </button>
+                <button style={quiet} onClick={() => { setArmed(false); setErr(""); }}>keep my account</button>
+              </div>
+            )}
             {/* Said plainly, because it is the question somebody signing out
                 actually has, and the answer is not obvious: the sky in this
                 browser stays where it is. */}
@@ -171,7 +211,11 @@ export default function SignIn({
                 people to wonder what they are signing up for. */}
             <div style={{ fontSize: 11, color: "rgba(200,196,235,.45)", lineHeight: 1.5 }}>
               No password. We use the address to send a code and to find your sky again,
-              nothing else.
+              nothing else.{" "}
+              <a href="/privacy" target="_blank" rel="noreferrer"
+                style={{ color: "rgba(200,196,235,.8)", textDecoration: "underline", textUnderlineOffset: 2 }}>
+                What Aether does with your thoughts
+              </a>
             </div>
             <button style={quiet} onClick={onClose}>not now</button>
           </>

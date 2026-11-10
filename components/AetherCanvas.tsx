@@ -2381,6 +2381,10 @@ interface SavedStar {
   form: FormType;
   energy: number;
   pos: [number,number,number];
+  // The stored row's uuid, when there is one. Kept so that forgetting a star
+  // can delete the shared copy exactly, rather than matching on its text.
+  // Optional, because every star saved before this existed has none.
+  dbId?: string;
   // Turn two and three. Aether asks exactly one concrete question back, and
   // if you answer it the star keeps a lit core forever after. Both optional,
   // so every star saved before this existed still loads unchanged.
@@ -4995,7 +4999,16 @@ export default function AetherCanvas() {
       try {
         const r=await fetch("/api/save",{method:"POST",headers,body:JSON.stringify(s)});
         const d=await r.json();
-        if (d?.ok&&d.id) setShareId(d.id);
+        if (d?.ok&&d.id) {
+          setShareId(d.id);
+          // Remember which row this star is, so forgetting it later can
+          // delete the shared copy by id instead of by matching its words.
+          const mark=(arr:SavedStar[])=>arr.map(x=>x.id===s.id?{...x,dbId:d.id}:x);
+          archiveRef.current=mark(archiveRef.current);
+          starsRef.current=mark(starsRef.current);
+          setList([...starsRef.current].reverse());
+          try { localStorage.setItem("aether_stars",JSON.stringify(archiveRef.current)); } catch {}
+        }
       } catch {}
     })();
   },[bumpStreak]);
@@ -5515,6 +5528,25 @@ export default function AetherCanvas() {
   // of ninety is the problem. Removes a single star everywhere: the archive,
   // the drawn buffer, the list, and storage.
   const forgetStar=useCallback((id:number)=>{
+    const gone=archiveRef.current.find(s=>s.id===id);
+    // Delete the stored copy too, so a share link stops resolving. This used
+    // to be local only, which meant a thought you had deliberately forgotten
+    // stayed readable by anybody holding a link you sent weeks ago.
+    //
+    // Fire and forget, deliberately: the star leaves your sky immediately
+    // either way. Blocking the animation on a round trip would make
+    // forgetting something feel like it needs permission, and a thought
+    // written before signing in has no owner, so there is nothing the server
+    // could delete anyway — the privacy note says so rather than pretending.
+    if (gone) void (async()=>{
+      try {
+        const a=await currentAuth();
+        if (!a) return;
+        await fetch("/api/star",{method:"DELETE",
+          headers:{"Content-Type":"application/json",Authorization:`Bearer ${a.token}`},
+          body:JSON.stringify({id:gone.dbId,thought:gone.thought,whisper:gone.whisper})});
+      } catch {}
+    })();
     archiveRef.current=archiveRef.current.filter(s=>s.id!==id);
     starsRef.current=archiveRef.current.slice(-CAP);
     sceneRef.current.rebuildStars?.(starsRef.current);
@@ -6032,7 +6064,11 @@ export default function AetherCanvas() {
               {/* Required from 2 August 2026, and consent does not remove it. */}
               <p style={{fontSize:11,lineHeight:1.55,color:"rgba(200,196,235,.5)",margin:0,
                 borderTop:"1px solid rgba(200,196,235,.14)",paddingTop:13}}>
-                {AI_DISCLOSURE}
+                {AI_DISCLOSURE}{" "}
+                <a href="/privacy" target="_blank" rel="noreferrer"
+                  style={{color:"rgba(200,196,235,.8)",textDecoration:"underline",textUnderlineOffset:2}}>
+                  What Aether does with your thoughts
+                </a>
               </p>
               <button onClick={()=>setCrisis(false)}
                 style={{background:"none",border:"1px solid rgba(200,196,235,.26)",
