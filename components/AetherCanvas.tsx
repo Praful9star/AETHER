@@ -2406,6 +2406,10 @@ interface SavedStar {
   // "Leave it with the star until then": a time the person chose for a
   // returning thought. Kept on the loop's root star. See lib/lang.ts.
   parkedUntil?: number;
+  // How loud the thought was, by the person's own one-tap rating, when the
+  // exchange began and when it closed. 1 is quiet, 5 is loud. Optional in
+  // both halves: nobody is made to rate anything. See lib/insights.ts.
+  loud?: { before: number; after?: number };
   // Turn two and three. Aether asks exactly one concrete question back, and
   // if you answer it the star keeps a lit core forever after. Both optional,
   // so every star saved before this existed still loads unchanged.
@@ -2466,6 +2470,25 @@ export default function AetherCanvas() {
   const [speakLang,setSpeakLang] = useState<"en"|"hi">("en");
   useEffect(()=>{ try { if (localStorage.getItem("aether_lang")==="hi") setSpeakLang("hi"); } catch {} },[]);
   const [patterns,setPatterns] = useState<Insights|null>(null);
+  // The rating being collected for the exchange on screen. A ref beside the
+  // state because the closing timer needs to read it from inside a callback.
+  const [loud,setLoud] = useState<{id:number;before?:number;after?:number}|null>(null);
+  const loudRef = useRef<{id:number;before?:number;after?:number}|null>(null);
+  const rateLoud=useCallback((id:number,which:"before"|"after",n:number)=>{
+    const prev=loudRef.current&&loudRef.current.id===id?loudRef.current:{id};
+    if (which==="after"&&!prev.before) return;   // an "after" with no "before" measures nothing
+    const next={...prev,[which]:n};
+    loudRef.current=next; setLoud(next);
+    const mark=(arr:SavedStar[])=>arr.map(x=>x.id===id?{...x,loud:{before:next.before!,...(next.after?{after:next.after}:{})}}:x);
+    archiveRef.current=mark(archiveRef.current);
+    starsRef.current=mark(starsRef.current);
+    try { localStorage.setItem("aether_stars",JSON.stringify(archiveRef.current)); } catch {}
+    if (which==="after") {
+      // Rated: nothing more is being asked, so the panel can go.
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+      closeTimer.current=setTimeout(()=>setAsk(a=>a&&a.id===id?null:a),1800);
+    }
+  },[]);
   // The loop. pendingLoopRef carries "this is a return to star X" from the
   // moment a thought is released to the moment its star is made; loopNote is
   // how many times that loop has now been entered, shown once, briefly.
@@ -5369,7 +5392,10 @@ export default function AetherCanvas() {
       } else {
         setAsk(a=>a&&a.id===id?{id,q:"",turn:turns.length,line,closing:true}:a);
         if (closeTimer.current) clearTimeout(closeTimer.current);
-        closeTimer.current=setTimeout(()=>setAsk(a=>a&&a.id===id?null:a),7000);
+        // Longer when there is a second rating to give: seven seconds is
+        // enough to read a closing line and not enough to also answer it.
+        const rating=loudRef.current?.id===id&&!!loudRef.current.before;
+        closeTimer.current=setTimeout(()=>setAsk(a=>a&&a.id===id?null:a),rating?13000:7000);
       }
     };
 
@@ -6021,6 +6047,40 @@ export default function AetherCanvas() {
               </button>
             </div>
             )}
+            {/* One tap, before and after, and both optional.
+                The only way to know whether an exchange changed anything is
+                to ask the person, twice, the same small question. Dots and
+                not a number field, because a rating that takes effort is a
+                form. It is the person's own reading of their own thought —
+                Aether does not interpret it, score it or say it back. */}
+            {ask.turn===1&&!ask.pending&&!ask.closing&&!(loud?.id===ask.id&&loud.before)&&(
+              <div style={{display:"flex",alignItems:"center",gap:10,color:"rgba(200,196,235,.55)",fontSize:10.5,letterSpacing:"0.06em"}}>
+                <span>How loud is it right now?</span>
+                <span style={{display:"flex",alignItems:"center",gap:7}}>
+                  {[1,2,3,4,5].map(n=>(
+                    <button key={n} onClick={()=>rateLoud(ask.id,"before",n)}
+                      aria-label={`before: ${n} of 5`}
+                      style={{width:8+n*3,height:8+n*3,borderRadius:99,padding:0,cursor:"pointer",
+                        background:"rgba(200,196,235,.14)",border:`1px solid ${a66}`}}/>
+                  ))}
+                </span>
+                <span style={{opacity:.6}}>quiet → loud</span>
+              </div>
+            )}
+            {ask.closing&&loud?.id===ask.id&&!!loud.before&&!loud.after&&(
+              <div style={{display:"flex",alignItems:"center",gap:10,color:"rgba(200,196,235,.55)",fontSize:10.5,letterSpacing:"0.06em"}}>
+                <span>And now?</span>
+                <span style={{display:"flex",alignItems:"center",gap:7}}>
+                  {[1,2,3,4,5].map(n=>(
+                    <button key={n} onClick={()=>rateLoud(ask.id,"after",n)}
+                      aria-label={`after: ${n} of 5`}
+                      style={{width:8+n*3,height:8+n*3,borderRadius:99,padding:0,cursor:"pointer",
+                        background:"rgba(200,196,235,.14)",border:`1px solid ${a66}`}}/>
+                  ))}
+                </span>
+                <span style={{opacity:.6}}>quiet → loud</span>
+              </div>
+            )}
             {/* How much is left, once there is more than one turn behind you.
                 Knowing the exchange ends is part of what makes it safe to be
                 honest inside it. */}
@@ -6112,6 +6172,12 @@ export default function AetherCanvas() {
                 <p style={{fontSize:13.5,lineHeight:1.6,color:"rgba(226,222,250,.9)",margin:0}}>
                   {patterns.peak.count} of your thoughts arrived between{" "}
                   <b style={{color:accentColor,fontWeight:500}}>{hourWindow(patterns.peak.startHour)}</b>.
+                </p>
+              )}
+              {patterns.ratings&&(
+                <p style={{fontSize:13.5,lineHeight:1.6,color:"rgba(226,222,250,.9)",margin:0}}>
+                  Of the <b style={{color:accentColor,fontWeight:500}}>{patterns.ratings.rated}</b> thoughts you rated before and after:{" "}
+                  {patterns.ratings.quieter} were quieter afterwards, {patterns.ratings.same} the same, {patterns.ratings.louder} louder.
                 </p>
               )}
               {patterns.loops.length>0?(

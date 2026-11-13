@@ -19,6 +19,7 @@ export type Insightable = {
   thought?: string;
   answer?: string;
   loopOf?: number;
+  loud?: { before: number; after?: number };
 };
 
 export type LoopSummary = {
@@ -46,6 +47,16 @@ export type Insights = {
    * few thoughts, or no window holds enough of them, for that to mean anything.
    */
   peak: { startHour: number; count: number; share: number } | null;
+  /**
+   * The person's own before-and-after ratings, as three counts. Null until
+   * at least three thoughts have both, because "1 of 1 was quieter" is not
+   * information.
+   *
+   * This is self-report with no comparison group: it says what somebody
+   * tapped, not what Aether caused. It is reported as counts for that reason
+   * and never as an average, an improvement or a percentage.
+   */
+  ratings: { rated: number; quieter: number; same: number; louder: number } | null;
 };
 
 const isTime = (id: number) => id > 1e12;
@@ -103,7 +114,16 @@ export function insights<T extends Insightable>(
     if (share >= 0.4) peak = { startHour: bestStart, count: best, share };
   }
 
-  return { total, loops, returns, answered, spanDays, peak };
+  let quieter = 0, same = 0, louder = 0;
+  for (const s of stars) {
+    const b = s.loud?.before, a = s.loud?.after;
+    if (!(b! >= 1 && b! <= 5 && a! >= 1 && a! <= 5)) continue;
+    if (a! < b!) quieter++; else if (a! > b!) louder++; else same++;
+  }
+  const rated = quieter + same + louder;
+  const ratings = rated >= 3 ? { rated, quieter, same, louder } : null;
+
+  return { total, loops, returns, answered, spanDays, peak, ratings };
 }
 
 /** "11pm – 2am". A window that wraps midnight reads naturally. */
