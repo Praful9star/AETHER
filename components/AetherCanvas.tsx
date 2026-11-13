@@ -14,7 +14,7 @@ import {
 import { captureVoice, micSupported, type Capture } from "@/lib/mic";
 import { authAvailable, currentAuth, onAuthChange, restoreFromLink, type Auth } from "@/lib/auth";
 import { HELPLINES, INTERNATIONAL, NOT_THERAPY, DOOR_LABEL, AI_DISCLOSURE } from "@/lib/crisis";
-import { mergeStars } from "@/lib/sky";
+import { mergeStars, skyLayout, findLoopRoot, loopSize } from "@/lib/sky";
 import SignIn from "@/components/SignIn";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -2385,6 +2385,10 @@ interface SavedStar {
   // can delete the shared copy exactly, rather than matching on its text.
   // Optional, because every star saved before this existed has none.
   dbId?: string;
+  // Set when this thought is a return to an earlier one: the id of the star
+  // it repeats. Such a star gathers beside that one instead of taking a place
+  // of its own, so a loop is visible as a cluster. See lib/sky.ts.
+  loopOf?: number;
   // Turn two and three. Aether asks exactly one concrete question back, and
   // if you answer it the star keeps a lit core forever after. Both optional,
   // so every star saved before this existed still loads unchanged.
@@ -2440,6 +2444,12 @@ export default function AetherCanvas() {
   const [echoing,setEchoing] = useState(false);
   const [voiceKept,setVoiceKept] = useState(false);
   const [crisis,setCrisis] = useState(false);
+  // The loop. pendingLoopRef carries "this is a return to star X" from the
+  // moment a thought is released to the moment its star is made; loopNote is
+  // how many times that loop has now been entered, shown once, briefly.
+  const pendingLoopRef = useRef<number|null>(null);
+  const [loopNote,setLoopNote] = useState(0);
+  const loopTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
   const keptTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
 
   const [auth,setAuth]           = useState<Auth|null>(null);
@@ -3847,7 +3857,10 @@ export default function AetherCanvas() {
         // rebuild with n capped at 120, and nothing per frame.
         const nowMs=Date.now();
         const eff:[number,number,number][]=new Array(n);
-        for (let i=0;i<n;i++) eff[i]=recededPos(arr[i],nowMs);
+        // skyLayout rather than recededPos alone: a thought that came back
+        // sits beside the star it repeats, so a loop reads as a cluster.
+        const laid=skyLayout(arr.slice(0,n),nowMs);
+        for (let i=0;i<n;i++) eff[i]=laid[i];
         for (let i=0;i<CAP;i++) {
           if (i<n) {
             const s=arr[i];
@@ -5197,7 +5210,17 @@ export default function AetherCanvas() {
     }
 
     if (save) {
-      remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,pos,question});
+      const loopOf=pendingLoopRef.current??undefined;
+      pendingLoopRef.current=null;
+      remember({id,thought:save,whisper:text,palette:pal,form:fm,energy:en,pos,question,
+        ...(loopOf!=null?{loopOf}:{})});
+      if (loopOf!=null) {
+        // Counted after remember(), so it includes the star just made.
+        const times=loopSize(archiveRef.current,loopOf);
+        setLoopNote(times);
+        if (loopTimer.current) clearTimeout(loopTimer.current);
+        loopTimer.current=setTimeout(()=>setLoopNote(0),6500);
+      }
       // Held back until the star has finished its flight (2.6s) and you have
       // read the line. Asking over the top of the animation would make the
       // question feel like a form field on a loading screen; arriving after it
@@ -5238,6 +5261,9 @@ export default function AetherCanvas() {
       // few, plus any older one that shares a real word with what was just
       // written, so a thought returning after a month can still be recognised.
       const prior=archiveRef.current;
+      // Is this the same thought again? Decided here, before the network, so
+      // the loop is drawn even when the model is unreachable.
+      pendingLoopRef.current=findLoopRoot(text,prior);
       const words=new Set(text.toLowerCase().match(/[a-z']{5,}/g)??[]);
       const echoes=words.size
         ? prior.slice(0,-4).filter(s=>(s.thought.toLowerCase().match(/[a-z']{5,}/g)??[]).some(w=>words.has(w)))
@@ -6101,6 +6127,23 @@ export default function AetherCanvas() {
             initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0}}
             style={{fontSize:9.5,letterSpacing:"0.26em",color:a66,textTransform:"uppercase"}}>
             ⊙ your voice, from out there
+          </motion.div>
+        </div>
+      )}
+
+      {/* The loop, named once. Stated as a count and a place, never as a
+          verdict: "you are overthinking" is a judgement, and "this is the
+          third time, and here is where they all are" is something a person
+          can look at and decide about for themselves. */}
+      {loopNote>1&&(
+        <div style={{position:"absolute",left:0,right:0,top:136,zIndex:4,display:"flex",justifyContent:"center",padding:"0 24px",pointerEvents:"none"}}>
+          <motion.div
+            initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} transition={{duration:0.7}}
+            style={{background:"rgba(9,6,18,.82)",border:`1px solid ${a44}`,borderRadius:999,
+              padding:"8px 18px",backdropFilter:"blur(8px)",maxWidth:520,
+              fontSize:11.5,letterSpacing:"0.04em",color:"rgba(226,222,250,.92)",textAlign:"center"}}>
+            <span style={{color:a88}}>◌</span>{" "}
+            This thought has come back — visit {loopNote}. It joined its star in <b style={{color:accentColor,fontWeight:500}}>My Sky</b>.
           </motion.div>
         </div>
       )}
