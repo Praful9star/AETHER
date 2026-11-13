@@ -13,6 +13,7 @@ import {
 } from "@/lib/voice-engine";
 import { captureVoice, micSupported, type Capture } from "@/lib/mic";
 import { authAvailable, currentAuth, onAuthChange, restoreFromLink, type Auth } from "@/lib/auth";
+import { insights, hourWindow, exportSky, type Insights } from "@/lib/insights";
 import { HELPLINES, INTERNATIONAL, NOT_THERAPY, DOOR_LABEL, AI_DISCLOSURE } from "@/lib/crisis";
 import { mergeStars, skyLayout, findLoopRoot, loopSize } from "@/lib/sky";
 import SignIn from "@/components/SignIn";
@@ -2444,6 +2445,7 @@ export default function AetherCanvas() {
   const [echoing,setEchoing] = useState(false);
   const [voiceKept,setVoiceKept] = useState(false);
   const [crisis,setCrisis] = useState(false);
+  const [patterns,setPatterns] = useState<Insights|null>(null);
   // The loop. pendingLoopRef carries "this is a return to star X" from the
   // moment a thought is released to the moment its star is made; loopNote is
   // how many times that loop has now been entered, shown once, briefly.
@@ -5831,6 +5833,9 @@ export default function AetherCanvas() {
           // withheld — see lib/crisis.ts for why there is no detector. An
           // always-open door needs nobody to be classified as in crisis,
           // which means nobody can be classified wrongly.
+          // What the sky says, counted. Offered once there is something to
+          // count; computed on open, in the browser, from what is already here.
+          ...(count>=3?[["PATTERNS",()=>setPatterns(insights(archiveRef.current))] as [string,()=>void]]:[]),
           ["⬡ "+DOOR_LABEL,()=>setCrisis(true)],
           // Only when accounts are actually configured on this deployment,
           // so a build without Supabase keys does not advertise a door that
@@ -6040,6 +6045,86 @@ export default function AetherCanvas() {
           </div>
         </div>
       )}
+
+      {/* Patterns. Counts and never verdicts — see lib/insights.ts. Nothing
+          here is scored, ranked as good or bad, or sent anywhere. */}
+      <AnimatePresence>
+        {patterns&&(
+          <motion.div
+            initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+            onClick={()=>setPatterns(null)}
+            style={{position:"fixed",inset:0,zIndex:65,background:"rgba(4,2,10,.88)",
+              backdropFilter:"blur(12px)",display:"flex",alignItems:"center",
+              justifyContent:"center",padding:20,overflowY:"auto"}}>
+            <motion.div
+              initial={{y:14,opacity:0}} animate={{y:0,opacity:1}}
+              onClick={e=>e.stopPropagation()}
+              style={{width:"100%",maxWidth:480,maxHeight:"86vh",overflowY:"auto",background:"rgba(9,6,18,.99)",
+                border:`1px solid ${a44}`,borderRadius:18,padding:24,
+                display:"flex",flexDirection:"column",gap:16,boxShadow:"0 20px 60px rgba(0,0,0,.65)"}}>
+              <div style={{fontSize:9.5,letterSpacing:"0.26em",color:a88,textTransform:"uppercase"}}>
+                What your sky says
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                {([[patterns.total,"thoughts"],[patterns.returns,"came back"],[patterns.answered,"answered"]] as [number,string][]).map(([n,l])=>(
+                  <div key={l} style={{flex:1,background:"rgba(255,255,255,.04)",border:"1px solid rgba(200,196,235,.14)",borderRadius:12,padding:"12px 10px",textAlign:"center"}}>
+                    <div style={{fontSize:24,color:"#ece8ff",fontFamily:"var(--font-serif), Georgia, serif"}}>{n}</div>
+                    <div style={{fontSize:9.5,letterSpacing:"0.14em",color:"rgba(200,196,235,.6)",textTransform:"uppercase"}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              {patterns.peak&&(
+                <p style={{fontSize:13.5,lineHeight:1.6,color:"rgba(226,222,250,.9)",margin:0}}>
+                  {patterns.peak.count} of your thoughts arrived between{" "}
+                  <b style={{color:accentColor,fontWeight:500}}>{hourWindow(patterns.peak.startHour)}</b>.
+                </p>
+              )}
+              {patterns.loops.length>0?(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{fontSize:9.5,letterSpacing:"0.2em",color:"rgba(200,196,235,.55)",textTransform:"uppercase"}}>
+                    Thoughts that keep returning
+                  </div>
+                  {patterns.loops.slice(0,5).map(l=>(
+                    <div key={l.rootId} style={{display:"flex",gap:12,alignItems:"center",background:"rgba(255,255,255,.035)",border:"1px solid rgba(200,196,235,.12)",borderRadius:12,padding:"11px 13px"}}>
+                      <div style={{minWidth:34,textAlign:"center",fontSize:19,color:accentColor,fontFamily:"var(--font-serif), Georgia, serif"}}>{l.visits}×</div>
+                      <div style={{fontSize:13,lineHeight:1.45,color:"rgba(232,228,255,.92)",fontFamily:"var(--font-serif), Georgia, serif"}}>
+                        {l.thought.length>110?l.thought.slice(0,108)+"…":l.thought}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ):(
+                <p style={{fontSize:13,lineHeight:1.6,color:"rgba(200,196,235,.7)",margin:0}}>
+                  No thought has come back yet. When one does, it gathers beside its star, and it will be listed here.
+                </p>
+              )}
+              <p style={{fontSize:11,lineHeight:1.55,color:"rgba(200,196,235,.5)",margin:0,borderTop:"1px solid rgba(200,196,235,.14)",paddingTop:13}}>
+                Counted in this browser from your own sky. Nothing here is scored or sent anywhere, and none of it is a diagnosis.
+              </p>
+              <div style={{display:"flex",gap:8}}>
+                {/* Your sky as a file you can keep. */}
+                <button onClick={()=>{
+                    try {
+                      const blob=new Blob([exportSky(archiveRef.current as any,Date.now())],{type:"application/json"});
+                      const url=URL.createObjectURL(blob);
+                      const a=document.createElement("a");
+                      a.href=url; a.download=`aether-sky-${new Date().toISOString().slice(0,10)}.json`;
+                      document.body.appendChild(a); a.click(); a.remove();
+                      setTimeout(()=>URL.revokeObjectURL(url),4000);
+                    } catch {}
+                  }}
+                  style={{flex:1,background:`linear-gradient(135deg,${a44},${a66}33)`,border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:"10px 12px",fontSize:9.5,letterSpacing:"0.16em",cursor:"pointer",fontFamily:"inherit"}}>
+                  ↓ EXPORT MY SKY
+                </button>
+                <button onClick={()=>setPatterns(null)}
+                  style={{background:"none",border:"1px solid rgba(200,196,235,.26)",color:"rgba(200,196,235,.78)",borderRadius:999,padding:"10px 16px",fontSize:9.5,letterSpacing:"0.16em",cursor:"pointer",fontFamily:"inherit"}}>
+                  CLOSE
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* The crisis panel. Reachable from anywhere, at any time, without
           anything being inferred about the person who opened it. Real numbers,

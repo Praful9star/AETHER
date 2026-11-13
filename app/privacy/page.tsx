@@ -167,6 +167,14 @@ export default function Privacy() {
           </p>
         </Section>
 
+        <Section title="You can take your sky with you">
+          <p style={p}>
+            <b style={{ color: ink, fontWeight: 500 }}>Patterns → Export my sky</b>{" "}
+            downloads every thought this browser holds as one readable file. Voice
+            recordings are not in it, because they are never stored.
+          </p>
+        </Section>
+
         <Section title="What we have not fixed yet">
           <p style={p}>
             These are real, and we would rather you heard them from us.
@@ -178,11 +186,6 @@ export default function Privacy() {
               </b>{" "}
               They were stored without an owner, so nothing can prove they are yours.
               Email us and we will remove them by hand.
-            </li>
-            <li>
-              <b style={{ color: ink, fontWeight: 500 }}>There is no export yet.</b>{" "}
-              You cannot download your sky as a file. You should be able to, and that
-              is next.
             </li>
             <li>
               <b style={{ color: ink, fontWeight: 500 }}>
