@@ -1,5 +1,6 @@
 import Groq from "groq-sdk";
 import { hashString, cleanQuestion, CONCRETE_QUESTIONS } from "@/lib/exchange";
+import { LANGUAGE_RULE, QUESTIONS, poolFor } from "@/lib/lang";
 
 // Minimal in-memory rate limit — this endpoint had none at all, meaning any
 // caller (script, bot, or just an impatient tab) could spam an LLM call with
@@ -106,7 +107,7 @@ function buildFallback(thought: string) {
     palette: FALLBACK_PALETTES[h % FALLBACK_PALETTES.length],
     form: FORMS[h % FORMS.length],
     energy: ((h % 100) / 100) * 0.7 + 0.2,
-    question: CONCRETE_QUESTIONS[hashString("q" + thought) % CONCRETE_QUESTIONS.length],
+    question: (p => p[hashString("q" + thought) % p.length])(poolFor(QUESTIONS, thought, CONCRETE_QUESTIONS)),
   };
 }
 
@@ -224,7 +225,7 @@ export async function POST(req: Request) {
       max_tokens: 400,
       temperature: 0.9,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT + memory },
+        { role: "system", content: SYSTEM_PROMPT + LANGUAGE_RULE + memory },
         { role: "user", content: sanitized },
       ],
     });
@@ -244,7 +245,8 @@ export async function POST(req: Request) {
       palette: json.palette.map(String),
       form: FORMS.includes(json.form as FormType) ? json.form : "spiral",
       energy: Math.max(0, Math.min(1, Number(json.energy) || 0.5)),
-      question: cleanQuestion(json.question, sanitized),
+      // The fallback is in the language the thought was written in.
+      question: cleanQuestion(json.question, sanitized, poolFor(QUESTIONS, sanitized, CONCRETE_QUESTIONS)),
     });
   } catch (err) {
     // The failure was completely silent: the catch swallowed everything and

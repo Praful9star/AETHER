@@ -9,6 +9,8 @@
 // Nothing here calls a model. It validates what one returned, and it has a
 // defensible answer ready for every way that can go wrong.
 
+import { bannedInAnyLanguage, HI_WHY } from "./lang";
+
 export function hashString(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) >>> 0;
@@ -150,6 +152,9 @@ export function cleanQuestion(raw: unknown, seed: string, pool = CONCRETE_QUESTI
   if ((q.match(/\?/g) ?? []).length > 1) return fallback;
   const low = q.toLowerCase();
   if (BANNED_OPENINGS.some(b => low.startsWith(b) || low.includes(" " + b))) return fallback;
+  // "Why" is refused in every language it can be asked in, and so is a
+  // question that smuggles in advice or reassurance. See lib/lang.ts.
+  if (HI_WHY.some(re => re.test(low)) || bannedInAnyLanguage(low)) return fallback;
   return q;
 }
 
@@ -165,6 +170,7 @@ export function cleanLine(raw: unknown, seed: string, pool = NEUTRAL_LINES): str
   if (line.includes("?")) return fallback;
   const norm = normalise(line);
   if (BANNED_IN_LINE.some(re => re.test(norm))) return fallback;
+  if (bannedInAnyLanguage(norm)) return fallback;
   // A model that starts listing has stopped talking and started advising.
   if (/^\s*[-*\d]\s/.test(line) || line.includes(" 1. ") || line.includes(" 2. ")) return fallback;
   return line;

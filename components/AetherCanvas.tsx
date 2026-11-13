@@ -13,6 +13,7 @@ import {
 } from "@/lib/voice-engine";
 import { captureVoice, micSupported, type Capture } from "@/lib/mic";
 import { authAvailable, currentAuth, onAuthChange, restoreFromLink, type Auth } from "@/lib/auth";
+import { detectLang, loopQuestion, poolFor, QUESTIONS, FIRST_LINE, parkOptions, parkedLabel, type ParkOption } from "@/lib/lang";
 import { insights, hourWindow, exportSky, type Insights } from "@/lib/insights";
 import { HELPLINES, INTERNATIONAL, NOT_THERAPY, DOOR_LABEL, AI_DISCLOSURE } from "@/lib/crisis";
 import { mergeStars, skyLayout, findLoopRoot, loopSize } from "@/lib/sky";
@@ -2203,8 +2204,15 @@ function makeSpeech() {
   const GOOD  = /google|samantha|serena|daniel|karen|moira|tessa|aria|jenny|libby|siri/i;
   const JUNK  = /zarvox|trinoids|bubbles|bells|boing|jester|organ|cellos|wobble|bahh|albert|bad news|good news|novelty|eloquence/i;
   let voice: SpeechSynthesisVoice | null = null;
+  // Devanagari read by an English voice is spelled out letter by letter or
+  // skipped entirely, so Hindi lines get a Hindi voice when the device has one.
+  let hiVoice: SpeechSynthesisVoice | null = null;
 
   const pick = () => {
+    const hi = synth.getVoices().filter(v => /^hi/i.test(v.lang) && !JUNK.test(v.name));
+    if (hi.length) hiVoice = hi.slice().sort((a, b) =>
+      ((GREAT.test(b.name) ? 4 : 0) + (GOOD.test(b.name) ? 2 : 0) + (b.localService ? 1 : 0)) -
+      ((GREAT.test(a.name) ? 4 : 0) + (GOOD.test(a.name) ? 2 : 0) + (a.localService ? 1 : 0)))[0];
     const all = synth.getVoices().filter(v => /^en/i.test(v.lang) && !JUNK.test(v.name));
     if (!all.length) return;
     const region = (navigator.language || "en-US").split("-")[1]?.toUpperCase() ?? "";
@@ -2268,13 +2276,13 @@ function makeSpeech() {
     let buf = "";
     for (const ch of line) {
       buf += ch;
-      if (/[,;:.!?\u2014\u2013]/.test(ch)) { out.push(buf.trim()); buf = ""; }
+      if (/[,;:.!?\u2014\u2013\u0964]/.test(ch)) { out.push(buf.trim()); buf = ""; }
     }
     if (buf.trim()) out.push(buf.trim());
     // A two-word fragment is not a clause, it is a stumble. Fold it back.
     const merged: string[] = [];
     for (const part of out) {
-      if (merged.length && part.replace(/[^a-z]/gi, "").length < 14) merged[merged.length - 1] += " " + part;
+      if (merged.length && part.replace(/[^a-z\u0900-\u097F]/gi, "").length < 14) merged[merged.length - 1] += " " + part;
       else merged.push(part);
     }
     return merged.length ? merged : [line];
@@ -2302,7 +2310,12 @@ function makeSpeech() {
       if (i >= parts.length) { runNext(mine); return; }
       try {
         const u = new SpeechSynthesisUtterance(parts[i]);
-        if (voice) { u.voice = voice; u.lang = voice.lang; }
+        if (/[\u0900-\u097F]/.test(parts[i])) {
+          // Hindi. With no Hindi voice installed the language tag alone still
+          // lets the engine choose one if it can, rather than forcing English.
+          if (hiVoice) u.voice = hiVoice;
+          u.lang = hiVoice?.lang || "hi-IN";
+        } else if (voice) { u.voice = voice; u.lang = voice.lang; }
         // Progressive deceleration: start near the intended rate and ease down
         // across the line, slowest on the last clause. A named technique from
         // guided relaxation — delivery that decelerates invites the listener's
@@ -2390,6 +2403,9 @@ interface SavedStar {
   // it repeats. Such a star gathers beside that one instead of taking a place
   // of its own, so a loop is visible as a cluster. See lib/sky.ts.
   loopOf?: number;
+  // "Leave it with the star until then": a time the person chose for a
+  // returning thought. Kept on the loop's root star. See lib/lang.ts.
+  parkedUntil?: number;
   // Turn two and three. Aether asks exactly one concrete question back, and
   // if you answer it the star keeps a lit core forever after. Both optional,
   // so every star saved before this existed still loads unchanged.
@@ -2445,12 +2461,16 @@ export default function AetherCanvas() {
   const [echoing,setEchoing] = useState(false);
   const [voiceKept,setVoiceKept] = useState(false);
   const [crisis,setCrisis] = useState(false);
+  // The language the microphone listens in. Typed thoughts need no setting:
+  // their language is read from the text itself.
+  const [speakLang,setSpeakLang] = useState<"en"|"hi">("en");
+  useEffect(()=>{ try { if (localStorage.getItem("aether_lang")==="hi") setSpeakLang("hi"); } catch {} },[]);
   const [patterns,setPatterns] = useState<Insights|null>(null);
   // The loop. pendingLoopRef carries "this is a return to star X" from the
   // moment a thought is released to the moment its star is made; loopNote is
   // how many times that loop has now been entered, shown once, briefly.
   const pendingLoopRef = useRef<number|null>(null);
-  const [loopNote,setLoopNote] = useState(0);
+  const [loopNote,setLoopNote] = useState<{times:number;rootId:number;parked?:number;justParked?:boolean}|null>(null);
   const loopTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
   const keptTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
 
@@ -5137,7 +5157,13 @@ export default function AetherCanvas() {
     return ()=>{ cancelled=true; };
   },[auth]);
 
-  const applyResult=useCallback((pal:string[],fm:FormType,en:number,text:string,save?:string,question?:string)=>{
+  const applyResult=useCallback((pal:string[],fm:FormType,en:number,text:string,save?:string,asked?:string)=>{
+    // A thought that has come back is not asked what it was asked the first
+    // time — that is how a loop gets rehearsed. It is asked the one thing
+    // that is new about a return: what is different. See lib/lang.ts.
+    const returning=save&&pendingLoopRef.current!=null
+      ? loopSize(archiveRef.current,pendingLoopRef.current)+1 : 0;
+    const question=returning&&save?loopQuestion(save,returning):asked;
     // Spell the thought's most powerful word in stars before the galaxy forms
     const word=save
       ?save.split(/\s+/).map(w=>w.replace(/[^a-zA-Z0-9]/g,"")).sort((a,b)=>b.length-a.length)[0]?.toUpperCase().slice(0,12)
@@ -5219,9 +5245,13 @@ export default function AetherCanvas() {
       if (loopOf!=null) {
         // Counted after remember(), so it includes the star just made.
         const times=loopSize(archiveRef.current,loopOf);
-        setLoopNote(times);
+        const root=archiveRef.current.find(x=>x.id===loopOf);
+        const parked=root?.parkedUntil&&root.parkedUntil>Date.now()?root.parkedUntil:undefined;
+        setLoopNote({times,rootId:loopOf,parked});
         if (loopTimer.current) clearTimeout(loopTimer.current);
-        loopTimer.current=setTimeout(()=>setLoopNote(0),6500);
+        // Long enough to read and to choose a time; it is the one note on
+        // this screen that asks for a decision.
+        loopTimer.current=setTimeout(()=>setLoopNote(null),14000);
       }
       // Held back until the star has finished its flight (2.6s) and you have
       // read the line. Asking over the top of the animation would make the
@@ -5240,10 +5270,13 @@ export default function AetherCanvas() {
 
   const fallback=useCallback((text:string)=>{
     const h=hashStr(text||"void");
-    applyResult(FALLBACK_PALETTES[h%FALLBACK_PALETTES.length],FORMS[h%FORMS.length],Math.min(1,0.25+(text.length%80)/90),FALLBACK_LINES[h%FALLBACK_LINES.length],text,
+    // With the network gone the curated line still answers in the language
+    // the thought was written in.
+    const lines=poolFor(FIRST_LINE,text,FALLBACK_LINES), qs=poolFor(QUESTIONS,text,CLIENT_QUESTIONS);
+    applyResult(FALLBACK_PALETTES[h%FALLBACK_PALETTES.length],FORMS[h%FORMS.length],Math.min(1,0.25+(text.length%80)/90),lines[h%lines.length],text,
       // The question survives the network being down. It is the part of the
       // exchange that does not need a model to be worth answering.
-      CLIENT_QUESTIONS[h%CLIENT_QUESTIONS.length]);
+      qs[h%qs.length]);
   },[applyResult]);
 
   const release=useCallback(async(raw:string)=>{
@@ -5619,7 +5652,9 @@ export default function AetherCanvas() {
     // on the way out. Match the listener, and fall back to en-US only if the
     // browser claims a language we cannot use.
     const lang=(typeof navigator!=="undefined"&&navigator.language)||"en-US";
-    rec.lang=/^en/i.test(lang)?lang:"en-US";
+    // "hi" hears Hindi and Hinglish alike and writes Hindi in Devanagari;
+    // chosen by the person with the toggle beside the mic, never guessed.
+    rec.lang=speakLang==="hi"?"hi-IN":(/^en/i.test(lang)?lang:"en-US");
     rec.continuous=false; rec.interimResults=false;
 
     // Record the microphone a second time, in parallel, so the thought can be
@@ -5664,7 +5699,7 @@ export default function AetherCanvas() {
     // ended without ever producing a result, so the microphone is released.
     rec.onend=()=>{ dropRecording(); setVoiceActive(false); };
     try{rec.start(); voiceRef.current=rec; setVoiceActive(true);}catch{setVoiceActive(false);}
-  },[stopSaying]);
+  },[stopSaying,speakLang]);
 
   const toggleVoice=useCallback((target:"thought"|"reply"="thought")=>{
     if (!hasVoice) return;
@@ -6220,15 +6255,46 @@ export default function AetherCanvas() {
           verdict: "you are overthinking" is a judgement, and "this is the
           third time, and here is where they all are" is something a person
           can look at and decide about for themselves. */}
-      {loopNote>1&&(
-        <div style={{position:"absolute",left:0,right:0,top:136,zIndex:4,display:"flex",justifyContent:"center",padding:"0 24px",pointerEvents:"none"}}>
+      {loopNote&&loopNote.times>1&&(
+        <div style={{position:"absolute",left:0,right:0,top:136,zIndex:4,display:"flex",justifyContent:"center",padding:"0 24px"}}>
           <motion.div
             initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} transition={{duration:0.7}}
-            style={{background:"rgba(9,6,18,.82)",border:`1px solid ${a44}`,borderRadius:999,
-              padding:"8px 18px",backdropFilter:"blur(8px)",maxWidth:520,
+            style={{background:"rgba(9,6,18,.88)",border:`1px solid ${a44}`,borderRadius:18,
+              padding:"10px 18px",backdropFilter:"blur(8px)",maxWidth:520,display:"flex",flexDirection:"column",gap:8,
               fontSize:11.5,letterSpacing:"0.04em",color:"rgba(226,222,250,.92)",textAlign:"center"}}>
-            <span style={{color:a88}}>◌</span>{" "}
-            This thought has come back — visit {loopNote}. It joined its star in <b style={{color:accentColor,fontWeight:500}}>My Sky</b>.
+            <div>
+              <span style={{color:a88}}>◌</span>{" "}
+              This thought has come back — visit {loopNote.times}. It joined its star in <b style={{color:accentColor,fontWeight:500}}>My Sky</b>.
+            </div>
+            {/* Worry postponement. A returning thought is neither argued with
+                nor obeyed: it is given an appointment, and the star holds it
+                until then. The person picks the time — Aether offering the
+                option is not Aether telling them to take it. */}
+            {loopNote.parked?(
+              <div style={{color:"rgba(200,196,235,.75)"}}>
+                {loopNote.justParked?"Left with its star until ":"You left this with its star until "}
+                <b style={{color:"#ece8ff",fontWeight:500}}>{parkedLabel(loopNote.parked,Date.now())}</b>.
+                {loopNote.justParked?"":" It is still there."}
+              </div>
+            ):(
+              <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{color:"rgba(200,196,235,.6)"}}>Leave it there until</span>
+                {parkOptions(Date.now()).map((o:ParkOption)=>(
+                  <button key={o.key} onClick={()=>{
+                      const mark=(arr:SavedStar[])=>arr.map(x=>x.id===loopNote.rootId?{...x,parkedUntil:o.until}:x);
+                      archiveRef.current=mark(archiveRef.current);
+                      starsRef.current=mark(starsRef.current);
+                      try { localStorage.setItem("aether_stars",JSON.stringify(archiveRef.current)); } catch {}
+                      setLoopNote({...loopNote,parked:o.until,justParked:true});
+                      if (loopTimer.current) clearTimeout(loopTimer.current);
+                      loopTimer.current=setTimeout(()=>setLoopNote(null),5000);
+                    }}
+                    style={{background:"none",border:`1px solid ${a66}`,color:"#ece8ff",borderRadius:999,padding:"4px 11px",fontSize:10.5,cursor:"pointer",fontFamily:"inherit"}}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </motion.div>
         </div>
       )}
@@ -6256,6 +6322,16 @@ export default function AetherCanvas() {
       {/* Input */}
       <div style={{position:"absolute",left:0,right:0,bottom:28,display:"flex",justifyContent:"center",padding:"0 18px",...ui}}>
         <div style={{width:"100%",maxWidth:580,display:"flex",gap:8,alignItems:"center"}}>
+          {hasVoice&&(
+            <button
+              onClick={()=>{ const n=speakLang==="hi"?"en":"hi"; setSpeakLang(n); try{localStorage.setItem("aether_lang",n);}catch{} }}
+              title={speakLang==="hi"?"Listening in Hindi / Hinglish — tap for English":"Listening in English — tap for Hindi / Hinglish"}
+              aria-label="language the microphone listens in"
+              style={{background:"rgba(10,6,22,.5)",border:`1px solid ${a44}`,color:"rgba(226,222,250,.85)",borderRadius:999,
+                minWidth:40,height:40,padding:"0 10px",fontSize:11.5,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+              {speakLang==="hi"?"हिं":"EN"}
+            </button>
+          )}
           {hasVoice&&(
             <button
               onClick={()=>toggleVoice("thought")}

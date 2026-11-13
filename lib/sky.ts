@@ -125,12 +125,30 @@ const STOP = new Set([
   "like","really","always","never","every","still","keep","keeps","kept","because",
   "want","dont","cant","into","over","again","very","much","more","some","feel",
   "feels","feeling","think","thinking","thought","know","going","being","myself",
+  // Hinglish
+  "nahi","nahin","mujhe","mera","meri","mere","kyun","kyon","raha","rahi","rahe",
+  "hoon","hain","kuch","bahut","phir","abhi","kaise","yaar","hota","hoti","hoga",
+  "karna","lagta","lagti","lekin","agar","unhone","usne","maine","wala","wali",
+  // Hindi
+  "नहीं","मुझे","मेरा","मेरी","मेरे","रहा","रही","रहे","हूँ","हैं","कुछ","बहुत","फिर",
+  "अभी","और","क्या","है","था","थी","को","का","की","के","में","से","पर","यह","वह",
+  "हो","भी","तो","कि","ही","एक","लिए","कर","मैं","हम","वो","ये",
 ]);
 
 /** The words of a thought that carry what it is about. */
+// Built with a constructor so the Unicode property escapes do not depend on
+// the compile target. Letters and combining marks: Devanagari vowel signs are
+// marks, and a class of letters alone would cut every Hindi word in pieces.
+const WORD = new RegExp("[\\p{L}\\p{M}]+", "gu");
+const LATIN = /^[a-z]+$/;
+
+/** The words of a thought that carry what it is about, in any script. */
 export function contentWords(text: string): Set<string> {
   const out = new Set<string>();
-  for (const w of text.toLowerCase().replace(/[‘’']/g, "").match(/[a-z]{4,}/g) ?? []) {
+  for (const w of text.toLowerCase().replace(/[\u2018\u2019']/g, "").match(WORD) ?? []) {
+    // Four letters for Latin; two for other scripts, where a word of two
+    // characters is routinely a whole noun.
+    if (w.length < (LATIN.test(w) ? 4 : 2)) continue;
     if (!STOP.has(w)) out.add(w);
   }
   return out;

@@ -3,6 +3,7 @@ import {
   MAX_TURNS, FOLLOWUP_QUESTIONS, NEUTRAL_LINES, CLOSING_LINES,
   cleanQuestion, cleanLine, readTurns, mayAskAgain, hashString,
 } from "@/lib/exchange";
+import { LANGUAGE_RULE, QUESTIONS, NEUTRAL, CLOSING, poolFor } from "@/lib/lang";
 
 // Turns two and three.
 //
@@ -103,6 +104,13 @@ export async function POST(req: Request) {
   const seed = thought + "|" + turns.map(t => t.a).join("|");
   const closing = !mayAskAgain(turns);
 
+  // Curated lines in the language the person is actually writing in, judged
+  // from their latest answer as well as the thought: people switch.
+  const said = thought + " " + (turns[turns.length - 1]?.a ?? "");
+  const qPool = poolFor(QUESTIONS, said, FOLLOWUP_QUESTIONS);
+  const nPool = poolFor(NEUTRAL, said, NEUTRAL_LINES);
+  const cPool = poolFor(CLOSING, said, CLOSING_LINES);
+
   // The transcript is the person's own words, and it is the one part of this
   // prompt somebody controls. It goes in labelled as what it is.
   const transcript = [
@@ -118,9 +126,9 @@ export async function POST(req: Request) {
 
   const fallback = () => ({
     line: closing
-      ? CLOSING_LINES[hashString("c" + seed) % CLOSING_LINES.length]
-      : NEUTRAL_LINES[hashString("l" + seed) % NEUTRAL_LINES.length],
-    question: closing ? null : FOLLOWUP_QUESTIONS[hashString("q" + seed) % FOLLOWUP_QUESTIONS.length],
+      ? cPool[hashString("c" + seed) % cPool.length]
+      : nPool[hashString("l" + seed) % nPool.length],
+    question: closing ? null : qPool[hashString("q" + seed) % qPool.length],
     done: closing,
     turnsLeft: closing ? 0 : MAX_TURNS - turns.length,
   });
@@ -133,7 +141,7 @@ export async function POST(req: Request) {
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: [
-        { role: "system", content: closing ? CLOSING_PROMPT : SYSTEM_PROMPT },
+        { role: "system", content: (closing ? CLOSING_PROMPT : SYSTEM_PROMPT) + LANGUAGE_RULE },
         { role: "user", content: userMsg },
       ],
       temperature: 0.8,
@@ -145,8 +153,8 @@ export async function POST(req: Request) {
     const json = JSON.parse(raw);
 
     return Response.json({
-      line: cleanLine(json.line, seed, closing ? CLOSING_LINES : NEUTRAL_LINES),
-      question: closing ? null : cleanQuestion(json.question, seed, FOLLOWUP_QUESTIONS),
+      line: cleanLine(json.line, seed, closing ? cPool : nPool),
+      question: closing ? null : cleanQuestion(json.question, seed, qPool),
       done: closing,
       turnsLeft: closing ? 0 : MAX_TURNS - turns.length,
     });
